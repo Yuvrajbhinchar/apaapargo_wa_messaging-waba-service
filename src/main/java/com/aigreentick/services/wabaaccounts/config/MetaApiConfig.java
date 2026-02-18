@@ -5,7 +5,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Configuration properties for Meta Graph API
+ * Configuration properties for Meta (Facebook) Cloud API
+ *
+ * Direct integration — AiGreenTick is a Meta Tech Partner.
+ * No BSP (Business Solution Provider) middleware required.
  */
 @Configuration
 @Getter
@@ -27,7 +30,9 @@ public class MetaApiConfig {
     private String webhookVerifyToken;
 
     /**
-     * Build full Graph API URL
+     * Builds a full Graph API URL for a given path
+     * Example: buildUrl("123456/phone_numbers") →
+     *          https://graph.facebook.com/v21.0/123456/phone_numbers
      */
     public String buildUrl(String path) {
         return graphApiBaseUrl + "/" + apiVersion + "/" + path;

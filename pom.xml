@@ -75,11 +75,14 @@
             <artifactId>spring-webflux</artifactId>
         </dependency>
 
-        <!-- Resilience4j (Circuit Breaker, Retry for Meta APIs) -->
         <dependency>
-            <groupId>io.github.resilience4j</groupId>
-            <artifactId>resilience4j-spring-boot3</artifactId>
-            <version>2.2.0</version>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-aspects</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
         </dependency>
 
         <!-- OpenAPI / Swagger UI -->

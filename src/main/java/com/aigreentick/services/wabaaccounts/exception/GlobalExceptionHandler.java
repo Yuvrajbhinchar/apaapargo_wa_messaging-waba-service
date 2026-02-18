@@ -20,21 +20,23 @@ import java.util.Map;
 
 /**
  * Global exception handler for all controllers
- * Provides consistent error responses across the service
+ * Provides consistent, structured error responses across the entire service
+ *
+ * Handler order matters — more specific exceptions must be declared BEFORE
+ * their parent class handlers (e.g., ClientException before MetaApiException)
  */
 @RestControllerAdvice
 @Slf4j
 public class GlobalExceptionHandler {
 
     // ========================
-    // Business Logic Exceptions
+    // BUSINESS LOGIC EXCEPTIONS
     // ========================
 
     @ExceptionHandler(WabaNotFoundException.class)
     public ResponseEntity<ApiResponse<Void>> handleWabaNotFound(
-            WabaNotFoundException ex,
-            HttpServletRequest request
-    ) {
+            WabaNotFoundException ex, HttpServletRequest request) {
+
         log.warn("WABA not found: {} - Path: {}", ex.getMessage(), request.getRequestURI());
         return ResponseEntity
                 .status(HttpStatus.NOT_FOUND)
@@ -43,9 +45,8 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(PhoneNumberNotFoundException.class)
     public ResponseEntity<ApiResponse<Void>> handlePhoneNumberNotFound(
-            PhoneNumberNotFoundException ex,
-            HttpServletRequest request
-    ) {
+            PhoneNumberNotFoundException ex, HttpServletRequest request) {
+
         log.warn("Phone number not found: {} - Path: {}", ex.getMessage(), request.getRequestURI());
         return ResponseEntity
                 .status(HttpStatus.NOT_FOUND)
@@ -54,9 +55,8 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(DuplicateWabaException.class)
     public ResponseEntity<ApiResponse<Void>> handleDuplicateWaba(
-            DuplicateWabaException ex,
-            HttpServletRequest request
-    ) {
+            DuplicateWabaException ex, HttpServletRequest request) {
+
         log.warn("Duplicate WABA: {} - Path: {}", ex.getMessage(), request.getRequestURI());
         return ResponseEntity
                 .status(HttpStatus.CONFLICT)
@@ -65,31 +65,18 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(InvalidRequestException.class)
     public ResponseEntity<ApiResponse<Void>> handleInvalidRequest(
-            InvalidRequestException ex,
-            HttpServletRequest request
-    ) {
+            InvalidRequestException ex, HttpServletRequest request) {
+
         log.warn("Invalid request: {} - Path: {}", ex.getMessage(), request.getRequestURI());
         return ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
                 .body(ApiResponse.error(ex.getMessage(), ex.getErrorCode()));
     }
 
-    @ExceptionHandler(MetaApiException.class)
-    public ResponseEntity<ApiResponse<Void>> handleMetaApiException(
-            MetaApiException ex,
-            HttpServletRequest request
-    ) {
-        log.error("Meta API error: {} - Path: {}", ex.getMessage(), request.getRequestURI(), ex);
-        return ResponseEntity
-                .status(HttpStatus.SERVICE_UNAVAILABLE)
-                .body(ApiResponse.error(ex.getMessage(), ex.getErrorCode()));
-    }
-
     @ExceptionHandler(WebhookVerificationException.class)
     public ResponseEntity<ApiResponse<Void>> handleWebhookVerification(
-            WebhookVerificationException ex,
-            HttpServletRequest request
-    ) {
+            WebhookVerificationException ex, HttpServletRequest request) {
+
         log.warn("Webhook verification failed: {} - Path: {}", ex.getMessage(), request.getRequestURI());
         return ResponseEntity
                 .status(HttpStatus.FORBIDDEN)
@@ -97,13 +84,38 @@ public class GlobalExceptionHandler {
     }
 
     // ========================
-    // Validation Exceptions
+    // META API EXCEPTIONS
+    // ClientException MUST come before MetaApiException (it's a subclass)
+    // ========================
+
+    @ExceptionHandler(MetaApiException.ClientException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMetaClientException(
+            MetaApiException.ClientException ex, HttpServletRequest request) {
+
+        log.warn("Meta API client error: {} - Path: {}", ex.getMessage(), request.getRequestURI());
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error(ex.getMessage(), ex.getErrorCode()));
+    }
+
+    @ExceptionHandler(MetaApiException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMetaApiException(
+            MetaApiException ex, HttpServletRequest request) {
+
+        log.error("Meta API error: {} - Path: {}", ex.getMessage(), request.getRequestURI(), ex);
+        return ResponseEntity
+                .status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(ApiResponse.error(ex.getMessage(), ex.getErrorCode()));
+    }
+
+    // ========================
+    // VALIDATION EXCEPTIONS
     // ========================
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ApiResponse<Map<String, String>>> handleValidationErrors(
-            MethodArgumentNotValidException ex
-    ) {
+            MethodArgumentNotValidException ex) {
+
         Map<String, String> fieldErrors = new HashMap<>();
         ex.getBindingResult().getAllErrors().forEach(error -> {
             String fieldName = ((FieldError) error).getField();
@@ -123,15 +135,13 @@ public class GlobalExceptionHandler {
                         .build())
                 .build();
 
-        return ResponseEntity
-                .status(HttpStatus.BAD_REQUEST)
-                .body(response);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
     }
 
     @ExceptionHandler(ConstraintViolationException.class)
     public ResponseEntity<ApiResponse<Void>> handleConstraintViolation(
-            ConstraintViolationException ex
-    ) {
+            ConstraintViolationException ex) {
+
         log.warn("Constraint violation: {}", ex.getMessage());
         return ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
@@ -140,8 +150,8 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(MissingServletRequestParameterException.class)
     public ResponseEntity<ApiResponse<Void>> handleMissingParameter(
-            MissingServletRequestParameterException ex
-    ) {
+            MissingServletRequestParameterException ex) {
+
         String message = "Required parameter '" + ex.getParameterName() + "' is missing";
         return ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
@@ -150,8 +160,8 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
     public ResponseEntity<ApiResponse<Void>> handleTypeMismatch(
-            MethodArgumentTypeMismatchException ex
-    ) {
+            MethodArgumentTypeMismatchException ex) {
+
         String message = "Invalid value '" + ex.getValue() + "' for parameter '" + ex.getName() + "'";
         return ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
@@ -159,41 +169,41 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(HttpMessageNotReadableException.class)
-    public ResponseEntity<ApiResponse<Void>> handleNotReadable(
-            HttpMessageNotReadableException ex
-    ) {
+    public ResponseEntity<ApiResponse<Void>> handleNotReadable(HttpMessageNotReadableException ex) {
         return ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
                 .body(ApiResponse.error("Invalid request body format", "INVALID_REQUEST_BODY"));
     }
 
     // ========================
-    // Database Exceptions
+    // DATABASE EXCEPTIONS
     // ========================
 
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ApiResponse<Void>> handleDataIntegrityViolation(
-            DataIntegrityViolationException ex
-    ) {
+            DataIntegrityViolationException ex) {
+
         log.error("Database integrity violation", ex);
-        String message = "Data conflict: The resource already exists or a constraint was violated";
         return ResponseEntity
                 .status(HttpStatus.CONFLICT)
-                .body(ApiResponse.error(message, "DATA_INTEGRITY_VIOLATION"));
+                .body(ApiResponse.error(
+                        "Data conflict: resource already exists or constraint violated",
+                        "DATA_INTEGRITY_VIOLATION"));
     }
 
     // ========================
-    // Fallback Exception
+    // FALLBACK
     // ========================
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> handleGenericException(
-            Exception ex,
-            HttpServletRequest request
-    ) {
-        log.error("Unexpected error at path {}: {}", request.getRequestURI(), ex.getMessage(), ex);
+            Exception ex, HttpServletRequest request) {
+
+        log.error("Unexpected error at {}: {}", request.getRequestURI(), ex.getMessage(), ex);
         return ResponseEntity
                 .status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(ApiResponse.error("An unexpected error occurred. Please try again later.", "INTERNAL_SERVER_ERROR"));
+                .body(ApiResponse.error(
+                        "An unexpected error occurred. Please try again later.",
+                        "INTERNAL_SERVER_ERROR"));
     }
 }

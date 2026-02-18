@@ -8,7 +8,7 @@ spring:
     name: waba-service
 
   datasource:
-    url: jdbc:mysql://localhost:3306/apargo_wa_messaging?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+    url: ${DB_URL:jdbc:mysql://localhost:3306/apargo_wa_messaging?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true}
     username: root
     password: yuvraj@3933
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -18,10 +18,11 @@ spring:
       connection-timeout: 30000
       idle-timeout: 600000
       max-lifetime: 1800000
+      pool-name: WabaHikariPool
 
   jpa:
     hibernate:
-      ddl-auto: validate  # Don't auto-create tables, they already exist
+      ddl-auto: validate
       naming:
         physical-strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
     show-sql: false
@@ -40,69 +41,51 @@ spring:
       fail-on-unknown-properties: false
     default-property-inclusion: non_null
 
-# Meta/WhatsApp Configuration
+# ================================
+# Meta Cloud API Configuration
+# Direct integration (Tech Partner)
+# No BSP middleware required
+# ================================
 meta:
   app-id: ${META_APP_ID:your-app-id}
   app-secret: ${META_APP_SECRET:your-app-secret}
   api-version: v21.0
   graph-api-base-url: https://graph.facebook.com
-  webhook-verify-token: ${WEBHOOK_VERIFY_TOKEN:aigreentick-webhook-token-2024}
+  webhook-verify-token: ${WEBHOOK_VERIFY_TOKEN:aigreentick-webhook-verify-token}
 
-# BSP Configuration (if using partner like 360dialog)
-bsp:
-  enabled: ${BSP_ENABLED:true}
-  provider: ${BSP_PROVIDER:360dialog}  # direct, 360dialog, twilio, gupshup
-  api-url: ${BSP_API_URL:https://waba.360dialog.io/v1}
-  api-key: ${BSP_API_KEY:}
-  partner-id: ${BSP_PARTNER_ID:}
+# ================================
+# Spring Retry Configuration
+# Used in MetaApiClient for
+# transient Meta API failures
+# ================================
+retry:
+  meta-api:
+    max-attempts: 3
+    initial-interval: 1000
+    multiplier: 2.0
+    max-interval: 10000
 
-# Resilience4j Circuit Breaker
-resilience4j:
-  circuitbreaker:
-    instances:
-      metaApi:
-        registerHealthIndicator: true
-        slidingWindowSize: 10
-        minimumNumberOfCalls: 5
-        permittedNumberOfCallsInHalfOpenState: 3
-        automaticTransitionFromOpenToHalfOpenEnabled: true
-        waitDurationInOpenState: 10s
-        failureRateThreshold: 50
-        eventConsumerBufferSize: 10
-        recordExceptions:
-          - java.io.IOException
-          - java.util.concurrent.TimeoutException
-          - org.springframework.web.client.ResourceAccessException
-        ignoreExceptions:
-          - com.aigreentick.services.wabaaccounts.exception.InvalidRequestException
-
-  retry:
-    instances:
-      metaApi:
-        maxAttempts: 3
-        waitDuration: 1s
-        enableExponentialBackoff: true
-        exponentialBackoffMultiplier: 2
-
+# ================================
 # Logging
+# ================================
 logging:
   level:
     root: INFO
     com.aigreentick.services.wabaaccounts: DEBUG
     org.springframework.web: INFO
-    org.springframework.security: INFO
     org.hibernate.SQL: DEBUG
     org.hibernate.type.descriptor.sql.BasicBinder: TRACE
   pattern:
-    console: "%d{yyyy-MM-dd HH:mm:ss} - %logger{36} - %msg%n"
-    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
 
+# ================================
 # Actuator Endpoints
+# ================================
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics,prometheus
+        include: health,info,metrics
   endpoint:
     health:
       show-details: always
@@ -114,7 +97,9 @@ management:
     diskspace:
       enabled: true
 
-# Swagger/OpenAPI
+# ================================
+# Swagger / OpenAPI
+# ================================
 springdoc:
   api-docs:
     path: /api-docs

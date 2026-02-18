@@ -2,21 +2,22 @@ package com.aigreentick.services.wabaaccounts.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.util.concurrent.Executor;
 
 /**
- * Async configuration for background webhook processing
+ * Async thread pool configuration
+ *
+ * webhookTaskExecutor:
+ * - Used by @Async("webhookTaskExecutor") in WebhookService
+ * - Processes incoming Meta webhook events in background
+ * - Core: 5 threads, Max: 20 threads, Queue: 100 tasks
+ * - Waits for tasks to finish on shutdown (graceful)
  */
 @Configuration
-@EnableAsync
 public class AsyncConfig {
 
-    /**
-     * Thread pool for webhook processing
-     */
     @Bean(name = "webhookTaskExecutor")
     public Executor webhookTaskExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();

@@ -20,6 +20,7 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * WebClient configuration for Meta Graph API calls
+ * Direct Meta Cloud API integration (no BSP)
  */
 @Configuration
 @Slf4j
@@ -32,12 +33,18 @@ public class WebClientConfig {
     private String apiVersion;
 
     /**
-     * WebClient configured for Meta Graph API
+     * WebClient pre-configured for Meta Graph API
+     * Base URL: https://graph.facebook.com/v21.0
+     *
+     * Timeouts:
+     * - Connect: 10s
+     * - Read:    30s
+     * - Write:   30s
      */
     @Bean(name = "metaWebClient")
     public WebClient metaWebClient() {
         HttpClient httpClient = HttpClient.create()
-                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 10000)
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 10_000)
                 .responseTimeout(Duration.ofSeconds(30))
                 .doOnConnected(conn ->
                         conn.addHandlerLast(new ReadTimeoutHandler(30, TimeUnit.SECONDS))
@@ -55,21 +62,21 @@ public class WebClientConfig {
     }
 
     /**
-     * Log outgoing requests (only in non-prod)
+     * Log outgoing Meta API requests (URL + method only, no auth headers)
      */
     private ExchangeFilterFunction logRequest() {
         return ExchangeFilterFunction.ofRequestProcessor(clientRequest -> {
-            log.debug("Meta API Request: {} {}", clientRequest.method(), clientRequest.url());
+            log.debug("→ Meta API Request: {} {}", clientRequest.method(), clientRequest.url());
             return Mono.just(clientRequest);
         });
     }
 
     /**
-     * Log incoming responses (only in non-prod)
+     * Log incoming Meta API response status
      */
     private ExchangeFilterFunction logResponse() {
         return ExchangeFilterFunction.ofResponseProcessor(clientResponse -> {
-            log.debug("Meta API Response Status: {}", clientResponse.statusCode());
+            log.debug("← Meta API Response: {}", clientResponse.statusCode());
             return Mono.just(clientResponse);
         });
     }

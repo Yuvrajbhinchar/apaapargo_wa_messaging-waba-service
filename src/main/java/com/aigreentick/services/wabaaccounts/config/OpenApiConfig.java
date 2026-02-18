@@ -8,7 +8,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * OpenAPI/Swagger configuration
+ * OpenAPI / Swagger UI configuration
+ * Access Swagger at: http://localhost:8081/swagger-ui.html
  */
 @Configuration
 public class OpenApiConfig {
@@ -18,14 +19,14 @@ public class OpenApiConfig {
         final String securitySchemeName = "bearerAuth";
 
         return new OpenAPI()
-                .addSecurityItem(new SecurityRequirement()
-                        .addList(securitySchemeName))
+                .addSecurityItem(new SecurityRequirement().addList(securitySchemeName))
                 .components(new Components()
                         .addSecuritySchemes(securitySchemeName, new SecurityScheme()
                                 .name(securitySchemeName)
                                 .type(SecurityScheme.Type.HTTP)
                                 .scheme("bearer")
                                 .bearerFormat("JWT")
-                                .description("JWT token from auth-service")));
+                                .description("JWT token from auth-service. " +
+                                        "Format: Bearer {token}")));
     }
 }
