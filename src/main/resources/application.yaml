@@ -11,9 +11,6 @@ spring:
 
   # ─────────────────────────────────────────────────────────
   # DATABASE
-  # Override via env vars in production:
-  #   DB_URL, DB_USERNAME, DB_PASSWORD
-  # For local dev: update username/password to match your MySQL
   # ─────────────────────────────────────────────────────────
   datasource:
     url: ${DB_URL:jdbc:mysql://localhost:3306/apargo_wa_messaging?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true&createDatabaseIfNotExist=true}
@@ -32,7 +29,7 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: validate           # Flyway owns schema — JPA only validates
+      ddl-auto: validate           # JPA only validates
       naming:
         physical-strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
     show-sql: false
@@ -57,11 +54,11 @@ spring:
 # Set real values via env vars in production
 # ─────────────────────────────────────────────────────────────
 meta:
-  app-id: ${META_APP_ID:your-meta-app-id}
-  app-secret: ${META_APP_SECRET:your-meta-app-secret}
+  app-id: 123456
+  app-secret: 123456
   api-version: v21.0
   graph-api-base-url: https://graph.facebook.com
-  webhook-verify-token: ${WEBHOOK_VERIFY_TOKEN:aigreentick-verify-token}
+  webhook-verify-token: 65487900
   # Optional: your Embedded Signup Config ID from Meta App Dashboard
   embedded-signup-config-id: ${META_EMBEDDED_SIGNUP_CONFIG_ID:}
 
@@ -110,17 +107,24 @@ resilience4j:
         limit-refresh-period: 1m
         timeout-duration: 0s
 
+
 # ─────────────────────────────────────────────────────────────
 # ACTUATOR
+#   1. Actuator moved to a separate internal port (8082).
+#      Expose port 8081 publicly, keep 8082 internal/VPC-only.
+#   2. Only 'health' is exposed on the public port (8081) via web exclusion.
+#   3. All other endpoints (prometheus, circuitbreakers, etc.) are on 8082.
 # ─────────────────────────────────────────────────────────────
 management:
+  server:
+    port: 8082          # Internal-only management port — do NOT expose to internet
   endpoints:
     web:
       exposure:
         include: health,info,metrics,prometheus,circuitbreakers,retries
   endpoint:
     health:
-      show-details: always
+      show-details: when_authorized   # Changed from 'always' — hides internals from public
       probes:
         enabled: true
   health:
@@ -129,6 +133,7 @@ management:
   metrics:
     tags:
       application: ${spring.application.name}
+
 
 # ─────────────────────────────────────────────────────────────
 # SWAGGER

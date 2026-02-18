@@ -443,3 +443,284 @@ com.aigreentick.services.wabaaccounts.exception.MetaApiException: Meta API is te
 2026-02-18T17:11:19.368+05:30  INFO 15656 --- [waba-service] [SpringApplicationShutdownHook] j.LocalContainerEntityManagerFactoryBean : Closing JPA EntityManagerFactory for persistence unit 'default'
 2026-02-18T17:11:19.375+05:30  INFO 15656 --- [waba-service] [SpringApplicationShutdownHook] com.zaxxer.hikari.HikariDataSource       : WabaHikariPool - Shutdown initiated...
 2026-02-18T17:11:19.389+05:30  INFO 15656 --- [waba-service] [SpringApplicationShutdownHook] com.zaxxer.hikari.HikariDataSource       : WabaHikariPool - Shutdown completed.
+2026-02-18T17:40:52.190+05:30  INFO 17580 --- [waba-service] [main] c.a.s.w.WabaServiceApplicationTests      : Starting WabaServiceApplicationTests using Java 21.0.3 with PID 17580 (started by DELL in C:\Users\DELL\Downloads\waba-service\waba-service)
+2026-02-18T17:40:52.193+05:30 DEBUG 17580 --- [waba-service] [main] c.a.s.w.WabaServiceApplicationTests      : Running with Spring Boot v3.3.4, Spring v6.1.13
+2026-02-18T17:40:52.196+05:30  INFO 17580 --- [waba-service] [main] c.a.s.w.WabaServiceApplicationTests      : No active profile set, falling back to 1 default profile: "default"
+2026-02-18T17:40:58.161+05:30  INFO 17580 --- [waba-service] [main] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2026-02-18T17:40:58.933+05:30  INFO 17580 --- [waba-service] [main] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 750 ms. Found 4 JPA repository interfaces.
+2026-02-18T17:41:03.986+05:30  INFO 17580 --- [waba-service] [main] o.hibernate.jpa.internal.util.LogHelper  : HHH000204: Processing PersistenceUnitInfo [name: default]
+2026-02-18T17:41:04.559+05:30  INFO 17580 --- [waba-service] [main] org.hibernate.Version                    : HHH000412: Hibernate ORM core version 6.5.3.Final
+2026-02-18T17:41:04.695+05:30  INFO 17580 --- [waba-service] [main] o.h.c.internal.RegionFactoryInitiator    : HHH000026: Second-level cache disabled
+2026-02-18T17:41:05.616+05:30  INFO 17580 --- [waba-service] [main] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
+2026-02-18T17:41:05.670+05:30  INFO 17580 --- [waba-service] [main] com.zaxxer.hikari.HikariDataSource       : WabaHikariPool - Starting...
+2026-02-18T17:41:06.015+05:30  INFO 17580 --- [waba-service] [main] com.zaxxer.hikari.pool.HikariPool        : WabaHikariPool - Added connection com.mysql.cj.jdbc.ConnectionImpl@5020e5ab
+2026-02-18T17:41:06.017+05:30  INFO 17580 --- [waba-service] [main] com.zaxxer.hikari.HikariDataSource       : WabaHikariPool - Start completed.
+2026-02-18T17:41:08.238+05:30  INFO 17580 --- [waba-service] [main] o.h.e.t.j.p.i.JtaPlatformInitiator       : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2026-02-18T17:41:08.373+05:30  INFO 17580 --- [waba-service] [main] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
+2026-02-18T17:41:11.196+05:30  INFO 17580 --- [waba-service] [main] o.s.d.j.r.query.QueryEnhancerFactory     : Hibernate is in classpath; If applicable, HQL parser will be used.
+2026-02-18T17:41:22.792+05:30  INFO 17580 --- [waba-service] [main] o.s.b.a.e.web.EndpointLinksResolver      : Exposing 5 endpoints beneath base path '/actuator'
+2026-02-18T17:41:23.233+05:30  INFO 17580 --- [waba-service] [main] c.a.s.w.WabaServiceApplicationTests      : Started WabaServiceApplicationTests in 32.395 seconds (process running for 35.122)
+2026-02-18T17:41:25.200+05:30  INFO 17580 --- [waba-service] [SpringApplicationShutdownHook] j.LocalContainerEntityManagerFactoryBean : Closing JPA EntityManagerFactory for persistence unit 'default'
+2026-02-18T17:41:25.208+05:30  INFO 17580 --- [waba-service] [SpringApplicationShutdownHook] com.zaxxer.hikari.HikariDataSource       : WabaHikariPool - Shutdown initiated...
+2026-02-18T17:41:25.264+05:30  INFO 17580 --- [waba-service] [SpringApplicationShutdownHook] com.zaxxer.hikari.HikariDataSource       : WabaHikariPool - Shutdown completed.
+2026-02-18T17:42:43.905+05:30  INFO 10880 --- [waba-service] [main] c.a.s.w.WabaServiceApplication           : Starting WabaServiceApplication v0.0.1-SNAPSHOT using Java 21.0.3 with PID 10880 (C:\Users\DELL\Downloads\waba-service\waba-service\target\waba-service-0.0.1-SNAPSHOT.jar started by DELL in C:\Users\DELL\Downloads\waba-service\waba-service)
+2026-02-18T17:42:43.908+05:30 DEBUG 10880 --- [waba-service] [main] c.a.s.w.WabaServiceApplication           : Running with Spring Boot v3.3.4, Spring v6.1.13
+2026-02-18T17:42:43.910+05:30  INFO 10880 --- [waba-service] [main] c.a.s.w.WabaServiceApplication           : No active profile set, falling back to 1 default profile: "default"
+2026-02-18T17:42:47.835+05:30  INFO 10880 --- [waba-service] [main] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2026-02-18T17:42:48.200+05:30  INFO 10880 --- [waba-service] [main] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 351 ms. Found 4 JPA repository interfaces.
+2026-02-18T17:42:51.505+05:30  INFO 10880 --- [waba-service] [main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8081 (http)
+2026-02-18T17:42:51.556+05:30  INFO 10880 --- [waba-service] [main] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-02-18T17:42:51.557+05:30  INFO 10880 --- [waba-service] [main] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.30]
+2026-02-18T17:42:51.684+05:30  INFO 10880 --- [waba-service] [main] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring embedded WebApplicationContext
+2026-02-18T17:42:51.685+05:30  INFO 10880 --- [waba-service] [main] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 7595 ms
+2026-02-18T17:42:53.011+05:30  INFO 10880 --- [waba-service] [main] o.hibernate.jpa.internal.util.LogHelper  : HHH000204: Processing PersistenceUnitInfo [name: default]
+2026-02-18T17:42:53.242+05:30  INFO 10880 --- [waba-service] [main] org.hibernate.Version                    : HHH000412: Hibernate ORM core version 6.5.3.Final
+2026-02-18T17:42:53.399+05:30  INFO 10880 --- [waba-service] [main] o.h.c.internal.RegionFactoryInitiator    : HHH000026: Second-level cache disabled
+2026-02-18T17:42:54.491+05:30  INFO 10880 --- [waba-service] [main] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
+2026-02-18T17:42:54.599+05:30  INFO 10880 --- [waba-service] [main] com.zaxxer.hikari.HikariDataSource       : WabaHikariPool - Starting...
+2026-02-18T17:42:55.179+05:30  INFO 10880 --- [waba-service] [main] com.zaxxer.hikari.pool.HikariPool        : WabaHikariPool - Added connection com.mysql.cj.jdbc.ConnectionImpl@691a5c3a
+2026-02-18T17:42:55.181+05:30  INFO 10880 --- [waba-service] [main] com.zaxxer.hikari.HikariDataSource       : WabaHikariPool - Start completed.
+2026-02-18T17:42:57.034+05:30  INFO 10880 --- [waba-service] [main] o.h.e.t.j.p.i.JtaPlatformInitiator       : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2026-02-18T17:42:57.159+05:30  INFO 10880 --- [waba-service] [main] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
+2026-02-18T17:42:59.318+05:30  INFO 10880 --- [waba-service] [main] o.s.d.j.r.query.QueryEnhancerFactory     : Hibernate is in classpath; If applicable, HQL parser will be used.
+2026-02-18T17:43:04.935+05:30  INFO 10880 --- [waba-service] [main] o.s.b.a.e.web.EndpointLinksResolver      : Exposing 6 endpoints beneath base path '/actuator'
+2026-02-18T17:43:05.173+05:30  INFO 10880 --- [waba-service] [main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port 8081 (http) with context path '/'
+2026-02-18T17:43:05.227+05:30  INFO 10880 --- [waba-service] [main] c.a.s.w.WabaServiceApplication           : Started WabaServiceApplication in 22.681 seconds (process running for 24.003)
+2026-02-18T17:43:46.053+05:30  INFO 10880 --- [waba-service] [http-nio-8081-exec-2] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring DispatcherServlet 'dispatcherServlet'
+2026-02-18T17:43:46.054+05:30  INFO 10880 --- [waba-service] [http-nio-8081-exec-2] o.s.web.servlet.DispatcherServlet        : Initializing Servlet 'dispatcherServlet'
+2026-02-18T17:43:46.057+05:30  INFO 10880 --- [waba-service] [http-nio-8081-exec-2] o.s.web.servlet.DispatcherServlet        : Completed initialization in 3 ms
+2026-02-18T17:43:50.017+05:30  INFO 10880 --- [waba-service] [http-nio-8081-exec-5] o.springdoc.api.AbstractOpenApiResource  : Init duration for springdoc-openapi is: 2852 ms
+2026-02-18T17:44:26.328+05:30  INFO 10880 --- [waba-service] [http-nio-8081-exec-7] c.a.s.w.c.EmbeddedSignupController       : POST /embedded-signup/callback - orgId=1, wabaId=<wabaId from SDK>
+2026-02-18T17:44:26.356+05:30  INFO 10880 --- [waba-service] [http-nio-8081-exec-7] c.a.s.w.service.EmbeddedSignupService    : Processing embedded signup: orgId=1, wabaId=<wabaId from SDK>
+2026-02-18T17:44:26.383+05:30  INFO 10880 --- [waba-service] [http-nio-8081-exec-7] c.a.s.wabaaccounts.client.MetaApiClient  : Exchanging OAuth code for access token
+2026-02-18T17:44:26.447+05:30 DEBUG 10880 --- [waba-service] [http-nio-8081-exec-7] c.a.s.w.config.WebClientConfig           : → Meta API Request: POST https://graph.facebook.com/v21.0/oauth/access_token?code=%3Ccode%20from%20Meta%3E&client_id=your-meta-app-id&client_secret=your-meta-app-secret
+2026-02-18T17:44:29.108+05:30 DEBUG 10880 --- [waba-service] [reactor-http-nio-2] c.a.s.w.config.WebClientConfig           : ← Meta API Response: 400 BAD_REQUEST
+2026-02-18T17:44:29.188+05:30 ERROR 10880 --- [waba-service] [http-nio-8081-exec-7] c.a.s.wabaaccounts.client.MetaApiClient  : All retry attempts exhausted for Meta API call: OAuth code exchange failed (4xx): {"error":{"message":"Invalid Client ID","type":"OAuthException","code":101,"fbtrace_id":"A_xn3WdvHm7EI3Dc0XkrMhB"}}
+2026-02-18T17:44:30.211+05:30  INFO 10880 --- [waba-service] [http-nio-8081-exec-7] c.a.s.wabaaccounts.client.MetaApiClient  : Exchanging OAuth code for access token
+2026-02-18T17:44:30.213+05:30 DEBUG 10880 --- [waba-service] [http-nio-8081-exec-7] c.a.s.w.config.WebClientConfig           : → Meta API Request: POST https://graph.facebook.com/v21.0/oauth/access_token?code=%3Ccode%20from%20Meta%3E&client_id=your-meta-app-id&client_secret=your-meta-app-secret
+2026-02-18T17:44:30.580+05:30 DEBUG 10880 --- [waba-service] [reactor-http-nio-2] c.a.s.w.config.WebClientConfig           : ← Meta API Response: 400 BAD_REQUEST
+2026-02-18T17:44:30.585+05:30 ERROR 10880 --- [waba-service] [http-nio-8081-exec-7] c.a.s.wabaaccounts.client.MetaApiClient  : All retry attempts exhausted for Meta API call: OAuth code exchange failed (4xx): {"error":{"message":"Invalid Client ID","type":"OAuthException","code":101,"fbtrace_id":"AOeI3J0cAI7qldd4b2EX_WZ"}}
+2026-02-18T17:44:32.613+05:30  INFO 10880 --- [waba-service] [http-nio-8081-exec-7] c.a.s.wabaaccounts.client.MetaApiClient  : Exchanging OAuth code for access token
+2026-02-18T17:44:32.615+05:30 DEBUG 10880 --- [waba-service] [http-nio-8081-exec-7] c.a.s.w.config.WebClientConfig           : → Meta API Request: POST https://graph.facebook.com/v21.0/oauth/access_token?code=%3Ccode%20from%20Meta%3E&client_id=your-meta-app-id&client_secret=your-meta-app-secret
+2026-02-18T17:44:32.937+05:30 DEBUG 10880 --- [waba-service] [reactor-http-nio-2] c.a.s.w.config.WebClientConfig           : ← Meta API Response: 400 BAD_REQUEST
+2026-02-18T17:44:32.942+05:30 ERROR 10880 --- [waba-service] [http-nio-8081-exec-7] c.a.s.wabaaccounts.client.MetaApiClient  : All retry attempts exhausted for Meta API call: OAuth code exchange failed (4xx): {"error":{"message":"Invalid Client ID","type":"OAuthException","code":101,"fbtrace_id":"A-7lJBJxC-pLAyHFiI3sqTx"}}
+2026-02-18T17:44:32.962+05:30 ERROR 10880 --- [waba-service] [http-nio-8081-exec-7] c.a.s.w.e.GlobalExceptionHandler         : Meta API error: Meta API is temporarily unavailable. Please try again later. - Path: /api/v1/embedded-signup/callback
+
+com.aigreentick.services.wabaaccounts.exception.MetaApiException: Meta API is temporarily unavailable. Please try again later.
+	at com.aigreentick.services.wabaaccounts.exception.MetaApiException.serviceUnavailable(MetaApiException.java:33) ~[!/:0.0.1-SNAPSHOT]
+	at com.aigreentick.services.wabaaccounts.client.MetaApiClient.handleFallback(MetaApiClient.java:397) ~[!/:0.0.1-SNAPSHOT]
+	at com.aigreentick.services.wabaaccounts.client.MetaApiClient.fallbackMetaApiResponse(MetaApiClient.java:373) ~[!/:0.0.1-SNAPSHOT]
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103) ~[na:na]
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580) ~[na:na]
+	at io.github.resilience4j.spring6.fallback.FallbackMethod.invoke(FallbackMethod.java:218) ~[resilience4j-spring6-2.2.0.jar!/:2.2.0]
+	at io.github.resilience4j.spring6.fallback.FallbackMethod.fallback(FallbackMethod.java:165) ~[resilience4j-spring6-2.2.0.jar!/:2.2.0]
+	at io.github.resilience4j.spring6.fallback.DefaultFallbackDecorator.lambda$decorate$0(DefaultFallbackDecorator.java:40) ~[resilience4j-spring6-2.2.0.jar!/:2.2.0]
+	at io.github.resilience4j.spring6.fallback.FallbackExecutor.execute(FallbackExecutor.java:39) ~[resilience4j-spring6-2.2.0.jar!/:2.2.0]
+	at io.github.resilience4j.spring6.circuitbreaker.configure.CircuitBreakerAspect.circuitBreakerAroundAdvice(CircuitBreakerAspect.java:109) ~[resilience4j-spring6-2.2.0.jar!/:2.2.0]
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103) ~[na:na]
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580) ~[na:na]
+	at org.springframework.aop.aspectj.AbstractAspectJAdvice.invokeAdviceMethodWithGivenArgs(AbstractAspectJAdvice.java:637) ~[spring-aop-6.1.13.jar!/:6.1.13]
+	at org.springframework.aop.aspectj.AbstractAspectJAdvice.invokeAdviceMethod(AbstractAspectJAdvice.java:627) ~[spring-aop-6.1.13.jar!/:6.1.13]
+	at org.springframework.aop.aspectj.AspectJAroundAdvice.invoke(AspectJAroundAdvice.java:71) ~[spring-aop-6.1.13.jar!/:6.1.13]
+	at org.springframework.aop.framework.ReflectiveMethodInvocation.proceed(ReflectiveMethodInvocation.java:173) ~[spring-aop-6.1.13.jar!/:6.1.13]
+	at org.springframework.aop.framework.CglibAopProxy$CglibMethodInvocation.proceed(CglibAopProxy.java:768) ~[spring-aop-6.1.13.jar!/:6.1.13]
+	at org.springframework.aop.aspectj.MethodInvocationProceedingJoinPoint.proceed(MethodInvocationProceedingJoinPoint.java:89) ~[spring-aop-6.1.13.jar!/:6.1.13]
+	at io.github.resilience4j.retry.Retry.lambda$decorateCheckedSupplier$1(Retry.java:135) ~[resilience4j-retry-2.2.0.jar!/:2.2.0]
+	at io.github.resilience4j.retry.Retry.executeCheckedSupplier(Retry.java:350) ~[resilience4j-retry-2.2.0.jar!/:2.2.0]
+	at io.github.resilience4j.spring6.retry.configure.RetryAspect.handleDefaultJoinPoint(RetryAspect.java:175) ~[resilience4j-spring6-2.2.0.jar!/:2.2.0]
+	at io.github.resilience4j.spring6.retry.configure.RetryAspect.proceed(RetryAspect.java:132) ~[resilience4j-spring6-2.2.0.jar!/:2.2.0]
+	at io.github.resilience4j.spring6.retry.configure.RetryAspect.lambda$retryAroundAdvice$0(RetryAspect.java:116) ~[resilience4j-spring6-2.2.0.jar!/:2.2.0]
+	at io.github.resilience4j.spring6.fallback.FallbackExecutor.execute(FallbackExecutor.java:37) ~[resilience4j-spring6-2.2.0.jar!/:2.2.0]
+	at io.github.resilience4j.spring6.retry.configure.RetryAspect.retryAroundAdvice(RetryAspect.java:117) ~[resilience4j-spring6-2.2.0.jar!/:2.2.0]
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103) ~[na:na]
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580) ~[na:na]
+	at org.springframework.aop.aspectj.AbstractAspectJAdvice.invokeAdviceMethodWithGivenArgs(AbstractAspectJAdvice.java:637) ~[spring-aop-6.1.13.jar!/:6.1.13]
+	at org.springframework.aop.aspectj.AbstractAspectJAdvice.invokeAdviceMethod(AbstractAspectJAdvice.java:627) ~[spring-aop-6.1.13.jar!/:6.1.13]
+	at org.springframework.aop.aspectj.AspectJAroundAdvice.invoke(AspectJAroundAdvice.java:71) ~[spring-aop-6.1.13.jar!/:6.1.13]
+	at org.springframework.aop.framework.ReflectiveMethodInvocation.proceed(ReflectiveMethodInvocation.java:173) ~[spring-aop-6.1.13.jar!/:6.1.13]
+	at org.springframework.aop.framework.CglibAopProxy$CglibMethodInvocation.proceed(CglibAopProxy.java:768) ~[spring-aop-6.1.13.jar!/:6.1.13]
+	at org.springframework.aop.interceptor.ExposeInvocationInterceptor.invoke(ExposeInvocationInterceptor.java:97) ~[spring-aop-6.1.13.jar!/:6.1.13]
+	at org.springframework.aop.framework.ReflectiveMethodInvocation.proceed(ReflectiveMethodInvocation.java:184) ~[spring-aop-6.1.13.jar!/:6.1.13]
+	at org.springframework.aop.framework.CglibAopProxy$CglibMethodInvocation.proceed(CglibAopProxy.java:768) ~[spring-aop-6.1.13.jar!/:6.1.13]
+	at org.springframework.aop.framework.CglibAopProxy$DynamicAdvisedInterceptor.intercept(CglibAopProxy.java:720) ~[spring-aop-6.1.13.jar!/:6.1.13]
+	at com.aigreentick.services.wabaaccounts.client.MetaApiClient$$SpringCGLIB$$0.exchangeCodeForToken(<generated>) ~[!/:0.0.1-SNAPSHOT]
+	at com.aigreentick.services.wabaaccounts.service.EmbeddedSignupService.exchangeCodeForToken(EmbeddedSignupService.java:195) ~[!/:0.0.1-SNAPSHOT]
+	at com.aigreentick.services.wabaaccounts.service.EmbeddedSignupService.processSignupCallback(EmbeddedSignupService.java:116) ~[!/:0.0.1-SNAPSHOT]
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103) ~[na:na]
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580) ~[na:na]
+	at org.springframework.aop.support.AopUtils.invokeJoinpointUsingReflection(AopUtils.java:355) ~[spring-aop-6.1.13.jar!/:6.1.13]
+	at org.springframework.aop.framework.ReflectiveMethodInvocation.invokeJoinpoint(ReflectiveMethodInvocation.java:196) ~[spring-aop-6.1.13.jar!/:6.1.13]
+	at org.springframework.aop.framework.ReflectiveMethodInvocation.proceed(ReflectiveMethodInvocation.java:163) ~[spring-aop-6.1.13.jar!/:6.1.13]
+	at org.springframework.aop.framework.CglibAopProxy$CglibMethodInvocation.proceed(CglibAopProxy.java:768) ~[spring-aop-6.1.13.jar!/:6.1.13]
+	at org.springframework.transaction.interceptor.TransactionAspectSupport.invokeWithinTransaction(TransactionAspectSupport.java:379) ~[spring-tx-6.1.13.jar!/:6.1.13]
+	at org.springframework.transaction.interceptor.TransactionInterceptor.invoke(TransactionInterceptor.java:119) ~[spring-tx-6.1.13.jar!/:6.1.13]
+	at org.springframework.aop.framework.ReflectiveMethodInvocation.proceed(ReflectiveMethodInvocation.java:184) ~[spring-aop-6.1.13.jar!/:6.1.13]
+	at org.springframework.aop.framework.CglibAopProxy$CglibMethodInvocation.proceed(CglibAopProxy.java:768) ~[spring-aop-6.1.13.jar!/:6.1.13]
+	at org.springframework.aop.framework.CglibAopProxy$DynamicAdvisedInterceptor.intercept(CglibAopProxy.java:720) ~[spring-aop-6.1.13.jar!/:6.1.13]
+	at com.aigreentick.services.wabaaccounts.service.EmbeddedSignupService$$SpringCGLIB$$0.processSignupCallback(<generated>) ~[!/:0.0.1-SNAPSHOT]
+	at com.aigreentick.services.wabaaccounts.controller.EmbeddedSignupController.handleCallback(EmbeddedSignupController.java:113) ~[!/:0.0.1-SNAPSHOT]
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103) ~[na:na]
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580) ~[na:na]
+	at org.springframework.web.method.support.InvocableHandlerMethod.doInvoke(InvocableHandlerMethod.java:255) ~[spring-web-6.1.13.jar!/:6.1.13]
+	at org.springframework.web.method.support.InvocableHandlerMethod.invokeForRequest(InvocableHandlerMethod.java:188) ~[spring-web-6.1.13.jar!/:6.1.13]
+	at org.springframework.web.servlet.mvc.method.annotation.ServletInvocableHandlerMethod.invokeAndHandle(ServletInvocableHandlerMethod.java:118) ~[spring-webmvc-6.1.13.jar!/:6.1.13]
+	at org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerAdapter.invokeHandlerMethod(RequestMappingHandlerAdapter.java:926) ~[spring-webmvc-6.1.13.jar!/:6.1.13]
+	at org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerAdapter.handleInternal(RequestMappingHandlerAdapter.java:831) ~[spring-webmvc-6.1.13.jar!/:6.1.13]
+	at org.springframework.web.servlet.mvc.method.AbstractHandlerMethodAdapter.handle(AbstractHandlerMethodAdapter.java:87) ~[spring-webmvc-6.1.13.jar!/:6.1.13]
+	at org.springframework.web.servlet.DispatcherServlet.doDispatch(DispatcherServlet.java:1089) ~[spring-webmvc-6.1.13.jar!/:6.1.13]
+	at org.springframework.web.servlet.DispatcherServlet.doService(DispatcherServlet.java:979) ~[spring-webmvc-6.1.13.jar!/:6.1.13]
+	at org.springframework.web.servlet.FrameworkServlet.processRequest(FrameworkServlet.java:1014) ~[spring-webmvc-6.1.13.jar!/:6.1.13]
+	at org.springframework.web.servlet.FrameworkServlet.doPost(FrameworkServlet.java:914) ~[spring-webmvc-6.1.13.jar!/:6.1.13]
+	at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:590) ~[tomcat-embed-core-10.1.30.jar!/:na]
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:885) ~[spring-webmvc-6.1.13.jar!/:6.1.13]
+	at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:658) ~[tomcat-embed-core-10.1.30.jar!/:na]
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:195) ~[tomcat-embed-core-10.1.30.jar!/:na]
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:140) ~[tomcat-embed-core-10.1.30.jar!/:na]
+	at org.apache.tomcat.websocket.server.WsFilter.doFilter(WsFilter.java:51) ~[tomcat-embed-websocket-10.1.30.jar!/:na]
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:164) ~[tomcat-embed-core-10.1.30.jar!/:na]
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:140) ~[tomcat-embed-core-10.1.30.jar!/:na]
+	at org.springframework.web.filter.RequestContextFilter.doFilterInternal(RequestContextFilter.java:100) ~[spring-web-6.1.13.jar!/:6.1.13]
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116) ~[spring-web-6.1.13.jar!/:6.1.13]
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:164) ~[tomcat-embed-core-10.1.30.jar!/:na]
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:140) ~[tomcat-embed-core-10.1.30.jar!/:na]
+	at org.springframework.web.filter.FormContentFilter.doFilterInternal(FormContentFilter.java:93) ~[spring-web-6.1.13.jar!/:6.1.13]
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116) ~[spring-web-6.1.13.jar!/:6.1.13]
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:164) ~[tomcat-embed-core-10.1.30.jar!/:na]
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:140) ~[tomcat-embed-core-10.1.30.jar!/:na]
+	at org.springframework.web.filter.ServerHttpObservationFilter.doFilterInternal(ServerHttpObservationFilter.java:113) ~[spring-web-6.1.13.jar!/:6.1.13]
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116) ~[spring-web-6.1.13.jar!/:6.1.13]
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:164) ~[tomcat-embed-core-10.1.30.jar!/:na]
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:140) ~[tomcat-embed-core-10.1.30.jar!/:na]
+	at org.springframework.web.filter.CharacterEncodingFilter.doFilterInternal(CharacterEncodingFilter.java:201) ~[spring-web-6.1.13.jar!/:6.1.13]
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116) ~[spring-web-6.1.13.jar!/:6.1.13]
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:164) ~[tomcat-embed-core-10.1.30.jar!/:na]
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:140) ~[tomcat-embed-core-10.1.30.jar!/:na]
+	at org.apache.catalina.core.StandardWrapperValve.invoke(StandardWrapperValve.java:167) ~[tomcat-embed-core-10.1.30.jar!/:na]
+	at org.apache.catalina.core.StandardContextValve.invoke(StandardContextValve.java:90) ~[tomcat-embed-core-10.1.30.jar!/:na]
+	at org.apache.catalina.authenticator.AuthenticatorBase.invoke(AuthenticatorBase.java:483) ~[tomcat-embed-core-10.1.30.jar!/:na]
+	at org.apache.catalina.core.StandardHostValve.invoke(StandardHostValve.java:115) ~[tomcat-embed-core-10.1.30.jar!/:na]
+	at org.apache.catalina.valves.ErrorReportValve.invoke(ErrorReportValve.java:93) ~[tomcat-embed-core-10.1.30.jar!/:na]
+	at org.apache.catalina.core.StandardEngineValve.invoke(StandardEngineValve.java:74) ~[tomcat-embed-core-10.1.30.jar!/:na]
+	at org.apache.catalina.connector.CoyoteAdapter.service(CoyoteAdapter.java:344) ~[tomcat-embed-core-10.1.30.jar!/:na]
+	at org.apache.coyote.http11.Http11Processor.service(Http11Processor.java:384) ~[tomcat-embed-core-10.1.30.jar!/:na]
+	at org.apache.coyote.AbstractProcessorLight.process(AbstractProcessorLight.java:63) ~[tomcat-embed-core-10.1.30.jar!/:na]
+	at org.apache.coyote.AbstractProtocol$ConnectionHandler.process(AbstractProtocol.java:905) ~[tomcat-embed-core-10.1.30.jar!/:na]
+	at org.apache.tomcat.util.net.NioEndpoint$SocketProcessor.doRun(NioEndpoint.java:1741) ~[tomcat-embed-core-10.1.30.jar!/:na]
+	at org.apache.tomcat.util.net.SocketProcessorBase.run(SocketProcessorBase.java:52) ~[tomcat-embed-core-10.1.30.jar!/:na]
+	at org.apache.tomcat.util.threads.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1190) ~[tomcat-embed-core-10.1.30.jar!/:na]
+	at org.apache.tomcat.util.threads.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:659) ~[tomcat-embed-core-10.1.30.jar!/:na]
+	at org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run(TaskThread.java:63) ~[tomcat-embed-core-10.1.30.jar!/:na]
+	at java.base/java.lang.Thread.run(Thread.java:1583) ~[na:na]
+
+2026-02-18T22:45:12.365+05:30  INFO 9376 --- [waba-service] [main] c.a.s.w.WabaServiceApplication           : Starting WabaServiceApplication using Java 21.0.3 with PID 9376 (C:\Users\DELL\Downloads\waba-service\waba-service\target\classes started by DELL in C:\Users\DELL\Downloads\waba-service\waba-service)
+2026-02-18T22:45:12.369+05:30 DEBUG 9376 --- [waba-service] [main] c.a.s.w.WabaServiceApplication           : Running with Spring Boot v3.3.4, Spring v6.1.13
+2026-02-18T22:45:12.370+05:30  INFO 9376 --- [waba-service] [main] c.a.s.w.WabaServiceApplication           : No active profile set, falling back to 1 default profile: "default"
+2026-02-18T22:45:16.509+05:30  INFO 9376 --- [waba-service] [main] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2026-02-18T22:45:16.972+05:30  INFO 9376 --- [waba-service] [main] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 424 ms. Found 4 JPA repository interfaces.
+2026-02-18T22:45:20.242+05:30  INFO 9376 --- [waba-service] [main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8081 (http)
+2026-02-18T22:45:20.295+05:30  INFO 9376 --- [waba-service] [main] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-02-18T22:45:20.297+05:30  INFO 9376 --- [waba-service] [main] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.30]
+2026-02-18T22:45:20.501+05:30  INFO 9376 --- [waba-service] [main] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring embedded WebApplicationContext
+2026-02-18T22:45:20.502+05:30  INFO 9376 --- [waba-service] [main] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 7920 ms
+2026-02-18T22:45:21.250+05:30 DEBUG 9376 --- [waba-service] [main] c.a.s.w.config.ActuatorSecurityFilter    : Filter 'actuatorSecurityFilter' configured for use
+2026-02-18T22:45:21.783+05:30  INFO 9376 --- [waba-service] [main] o.hibernate.jpa.internal.util.LogHelper  : HHH000204: Processing PersistenceUnitInfo [name: default]
+2026-02-18T22:45:22.062+05:30  INFO 9376 --- [waba-service] [main] org.hibernate.Version                    : HHH000412: Hibernate ORM core version 6.5.3.Final
+2026-02-18T22:45:22.198+05:30  INFO 9376 --- [waba-service] [main] o.h.c.internal.RegionFactoryInitiator    : HHH000026: Second-level cache disabled
+2026-02-18T22:45:23.232+05:30  INFO 9376 --- [waba-service] [main] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
+2026-02-18T22:45:23.314+05:30  INFO 9376 --- [waba-service] [main] com.zaxxer.hikari.HikariDataSource       : WabaHikariPool - Starting...
+2026-02-18T22:45:23.810+05:30  INFO 9376 --- [waba-service] [main] com.zaxxer.hikari.pool.HikariPool        : WabaHikariPool - Added connection com.mysql.cj.jdbc.ConnectionImpl@3dad8bde
+2026-02-18T22:45:23.814+05:30  INFO 9376 --- [waba-service] [main] com.zaxxer.hikari.HikariDataSource       : WabaHikariPool - Start completed.
+2026-02-18T22:45:26.061+05:30  INFO 9376 --- [waba-service] [main] o.h.e.t.j.p.i.JtaPlatformInitiator       : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2026-02-18T22:45:26.203+05:30  INFO 9376 --- [waba-service] [main] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
+2026-02-18T22:45:27.483+05:30  INFO 9376 --- [waba-service] [main] c.a.s.w.config.MetaConfigValidator       : Validating Meta API configuration...
+2026-02-18T22:45:27.487+05:30  WARN 9376 --- [waba-service] [main] ConfigServletWebServerApplicationContext : Exception encountered during context initialization - cancelling refresh attempt: org.springframework.beans.factory.BeanCreationException: Error creating bean with name 'metaConfigValidator': Invocation of init method failed
+2026-02-18T22:45:27.488+05:30  INFO 9376 --- [waba-service] [main] j.LocalContainerEntityManagerFactoryBean : Closing JPA EntityManagerFactory for persistence unit 'default'
+2026-02-18T22:45:27.498+05:30  INFO 9376 --- [waba-service] [main] com.zaxxer.hikari.HikariDataSource       : WabaHikariPool - Shutdown initiated...
+2026-02-18T22:45:27.518+05:30  INFO 9376 --- [waba-service] [main] com.zaxxer.hikari.HikariDataSource       : WabaHikariPool - Shutdown completed.
+2026-02-18T22:45:27.525+05:30  INFO 9376 --- [waba-service] [main] o.apache.catalina.core.StandardService   : Stopping service [Tomcat]
+2026-02-18T22:45:27.578+05:30  INFO 9376 --- [waba-service] [main] .s.b.a.l.ConditionEvaluationReportLogger : 
+
+Error starting ApplicationContext. To display the condition evaluation report re-run your application with 'debug' enabled.
+2026-02-18T22:45:27.639+05:30 ERROR 9376 --- [waba-service] [main] o.s.boot.SpringApplication               : Application run failed
+
+org.springframework.beans.factory.BeanCreationException: Error creating bean with name 'metaConfigValidator': Invocation of init method failed
+	at org.springframework.beans.factory.annotation.InitDestroyAnnotationBeanPostProcessor.postProcessBeforeInitialization(InitDestroyAnnotationBeanPostProcessor.java:222) ~[spring-beans-6.1.13.jar:6.1.13]
+	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.applyBeanPostProcessorsBeforeInitialization(AbstractAutowireCapableBeanFactory.java:422) ~[spring-beans-6.1.13.jar:6.1.13]
+	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.initializeBean(AbstractAutowireCapableBeanFactory.java:1798) ~[spring-beans-6.1.13.jar:6.1.13]
+	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.doCreateBean(AbstractAutowireCapableBeanFactory.java:600) ~[spring-beans-6.1.13.jar:6.1.13]
+	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.createBean(AbstractAutowireCapableBeanFactory.java:522) ~[spring-beans-6.1.13.jar:6.1.13]
+	at org.springframework.beans.factory.support.AbstractBeanFactory.lambda$doGetBean$0(AbstractBeanFactory.java:337) ~[spring-beans-6.1.13.jar:6.1.13]
+	at org.springframework.beans.factory.support.DefaultSingletonBeanRegistry.getSingleton(DefaultSingletonBeanRegistry.java:234) ~[spring-beans-6.1.13.jar:6.1.13]
+	at org.springframework.beans.factory.support.AbstractBeanFactory.doGetBean(AbstractBeanFactory.java:335) ~[spring-beans-6.1.13.jar:6.1.13]
+	at org.springframework.beans.factory.support.AbstractBeanFactory.getBean(AbstractBeanFactory.java:200) ~[spring-beans-6.1.13.jar:6.1.13]
+	at org.springframework.beans.factory.support.DefaultListableBeanFactory.preInstantiateSingletons(DefaultListableBeanFactory.java:975) ~[spring-beans-6.1.13.jar:6.1.13]
+	at org.springframework.context.support.AbstractApplicationContext.finishBeanFactoryInitialization(AbstractApplicationContext.java:971) ~[spring-context-6.1.13.jar:6.1.13]
+	at org.springframework.context.support.AbstractApplicationContext.refresh(AbstractApplicationContext.java:625) ~[spring-context-6.1.13.jar:6.1.13]
+	at org.springframework.boot.web.servlet.context.ServletWebServerApplicationContext.refresh(ServletWebServerApplicationContext.java:146) ~[spring-boot-3.3.4.jar:3.3.4]
+	at org.springframework.boot.SpringApplication.refresh(SpringApplication.java:754) ~[spring-boot-3.3.4.jar:3.3.4]
+	at org.springframework.boot.SpringApplication.refreshContext(SpringApplication.java:456) ~[spring-boot-3.3.4.jar:3.3.4]
+	at org.springframework.boot.SpringApplication.run(SpringApplication.java:335) ~[spring-boot-3.3.4.jar:3.3.4]
+	at org.springframework.boot.SpringApplication.run(SpringApplication.java:1363) ~[spring-boot-3.3.4.jar:3.3.4]
+	at org.springframework.boot.SpringApplication.run(SpringApplication.java:1352) ~[spring-boot-3.3.4.jar:3.3.4]
+	at com.aigreentick.services.wabaaccounts.WabaServiceApplication.main(WabaServiceApplication.java:49) ~[classes/:na]
+Caused by: java.lang.IllegalStateException: 
+
+╔══════════════════════════════════════════════════════════════╗
+║  STARTUP FAILED — Missing Required Configuration             ║
+╠══════════════════════════════════════════════════════════════╣
+║  Config key : meta.app-id                                      ║
+║  Env var    : META_APP_ID                                      ║
+║                                                              ║
+║  Set the environment variable before starting the service:   ║
+║  export META_APP_ID=<your-value>
+╚══════════════════════════════════════════════════════════════╝
+
+	at com.aigreentick.services.wabaaccounts.config.MetaConfigValidator.validateRequired(MetaConfigValidator.java:78) ~[classes/:na]
+	at com.aigreentick.services.wabaaccounts.config.MetaConfigValidator.validateMetaConfig(MetaConfigValidator.java:48) ~[classes/:na]
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103) ~[na:na]
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580) ~[na:na]
+	at org.springframework.beans.factory.annotation.InitDestroyAnnotationBeanPostProcessor$LifecycleMethod.invoke(InitDestroyAnnotationBeanPostProcessor.java:457) ~[spring-beans-6.1.13.jar:6.1.13]
+	at org.springframework.beans.factory.annotation.InitDestroyAnnotationBeanPostProcessor$LifecycleMetadata.invokeInitMethods(InitDestroyAnnotationBeanPostProcessor.java:401) ~[spring-beans-6.1.13.jar:6.1.13]
+	at org.springframework.beans.factory.annotation.InitDestroyAnnotationBeanPostProcessor.postProcessBeforeInitialization(InitDestroyAnnotationBeanPostProcessor.java:219) ~[spring-beans-6.1.13.jar:6.1.13]
+	... 18 common frames omitted
+
+2026-02-18T22:48:35.425+05:30  INFO 4788 --- [waba-service] [main] c.a.s.w.WabaServiceApplication           : Starting WabaServiceApplication using Java 21.0.3 with PID 4788 (C:\Users\DELL\Downloads\waba-service\waba-service\target\classes started by DELL in C:\Users\DELL\Downloads\waba-service\waba-service)
+2026-02-18T22:48:35.429+05:30 DEBUG 4788 --- [waba-service] [main] c.a.s.w.WabaServiceApplication           : Running with Spring Boot v3.3.4, Spring v6.1.13
+2026-02-18T22:48:35.430+05:30  INFO 4788 --- [waba-service] [main] c.a.s.w.WabaServiceApplication           : No active profile set, falling back to 1 default profile: "default"
+2026-02-18T22:48:39.476+05:30  INFO 4788 --- [waba-service] [main] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2026-02-18T22:48:39.886+05:30  INFO 4788 --- [waba-service] [main] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 374 ms. Found 4 JPA repository interfaces.
+2026-02-18T22:48:42.846+05:30  INFO 4788 --- [waba-service] [main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8081 (http)
+2026-02-18T22:48:42.909+05:30  INFO 4788 --- [waba-service] [main] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-02-18T22:48:42.910+05:30  INFO 4788 --- [waba-service] [main] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.30]
+2026-02-18T22:48:43.141+05:30  INFO 4788 --- [waba-service] [main] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring embedded WebApplicationContext
+2026-02-18T22:48:43.142+05:30  INFO 4788 --- [waba-service] [main] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 7507 ms
+2026-02-18T22:48:43.804+05:30 DEBUG 4788 --- [waba-service] [main] c.a.s.w.config.ActuatorSecurityFilter    : Filter 'actuatorSecurityFilter' configured for use
+2026-02-18T22:48:44.263+05:30  INFO 4788 --- [waba-service] [main] o.hibernate.jpa.internal.util.LogHelper  : HHH000204: Processing PersistenceUnitInfo [name: default]
+2026-02-18T22:48:44.540+05:30  INFO 4788 --- [waba-service] [main] org.hibernate.Version                    : HHH000412: Hibernate ORM core version 6.5.3.Final
+2026-02-18T22:48:44.671+05:30  INFO 4788 --- [waba-service] [main] o.h.c.internal.RegionFactoryInitiator    : HHH000026: Second-level cache disabled
+2026-02-18T22:48:45.655+05:30  INFO 4788 --- [waba-service] [main] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
+2026-02-18T22:48:45.745+05:30  INFO 4788 --- [waba-service] [main] com.zaxxer.hikari.HikariDataSource       : WabaHikariPool - Starting...
+2026-02-18T22:48:46.145+05:30  INFO 4788 --- [waba-service] [main] com.zaxxer.hikari.pool.HikariPool        : WabaHikariPool - Added connection com.mysql.cj.jdbc.ConnectionImpl@1e749235
+2026-02-18T22:48:46.148+05:30  INFO 4788 --- [waba-service] [main] com.zaxxer.hikari.HikariDataSource       : WabaHikariPool - Start completed.
+2026-02-18T22:48:47.992+05:30  INFO 4788 --- [waba-service] [main] o.h.e.t.j.p.i.JtaPlatformInitiator       : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2026-02-18T22:48:48.118+05:30  INFO 4788 --- [waba-service] [main] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
+2026-02-18T22:48:49.363+05:30  INFO 4788 --- [waba-service] [main] c.a.s.w.config.MetaConfigValidator       : Validating Meta API configuration...
+2026-02-18T22:48:49.363+05:30  WARN 4788 --- [waba-service] [main] c.a.s.w.config.MetaConfigValidator       : META_EMBEDDED_SIGNUP_CONFIG_ID is not set. The /embedded-signup/config endpoint will return an empty configId. Set this via Meta App Dashboard → WhatsApp → Configuration → Embedded Signup.
+2026-02-18T22:48:49.364+05:30  INFO 4788 --- [waba-service] [main] c.a.s.w.config.MetaConfigValidator       : Meta API configuration validated successfully. App ID: 1234***
+2026-02-18T22:48:50.500+05:30  INFO 4788 --- [waba-service] [main] o.s.d.j.r.query.QueryEnhancerFactory     : Hibernate is in classpath; If applicable, HQL parser will be used.
+2026-02-18T22:48:55.742+05:30  INFO 4788 --- [waba-service] [main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port 8081 (http) with context path '/'
+2026-02-18T22:48:55.997+05:30  INFO 4788 --- [waba-service] [main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8082 (http)
+2026-02-18T22:48:55.999+05:30  INFO 4788 --- [waba-service] [main] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-02-18T22:48:56.000+05:30  INFO 4788 --- [waba-service] [main] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.30]
+2026-02-18T22:48:56.052+05:30  INFO 4788 --- [waba-service] [main] o.a.c.c.C.[Tomcat-1].[localhost].[/]     : Initializing Spring embedded WebApplicationContext
+2026-02-18T22:48:56.052+05:30  INFO 4788 --- [waba-service] [main] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 302 ms
+2026-02-18T22:48:56.076+05:30  INFO 4788 --- [waba-service] [main] o.s.b.a.e.web.EndpointLinksResolver      : Exposing 6 endpoints beneath base path '/actuator'
+2026-02-18T22:48:56.145+05:30  INFO 4788 --- [waba-service] [main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port 8082 (http) with context path '/'
+2026-02-18T22:48:56.173+05:30  INFO 4788 --- [waba-service] [main] c.a.s.w.WabaServiceApplication           : Started WabaServiceApplication in 21.836 seconds (process running for 22.72)
+2026-02-18T22:49:01.151+05:30  INFO 4788 --- [waba-service] [SpringApplicationShutdownHook] o.s.b.w.e.tomcat.GracefulShutdown        : Commencing graceful shutdown. Waiting for active requests to complete
+2026-02-18T22:49:01.165+05:30  INFO 4788 --- [waba-service] [tomcat-shutdown] o.s.b.w.e.tomcat.GracefulShutdown        : Graceful shutdown complete
+2026-02-18T22:49:01.174+05:30  INFO 4788 --- [waba-service] [SpringApplicationShutdownHook] o.s.b.w.e.tomcat.GracefulShutdown        : Commencing graceful shutdown. Waiting for active requests to complete
+2026-02-18T22:49:01.187+05:30  INFO 4788 --- [waba-service] [tomcat-shutdown] o.s.b.w.e.tomcat.GracefulShutdown        : Graceful shutdown complete
+2026-02-18T22:49:01.225+05:30  INFO 4788 --- [waba-service] [SpringApplicationShutdownHook] j.LocalContainerEntityManagerFactoryBean : Closing JPA EntityManagerFactory for persistence unit 'default'
+2026-02-18T22:49:01.232+05:30  INFO 4788 --- [waba-service] [SpringApplicationShutdownHook] com.zaxxer.hikari.HikariDataSource       : WabaHikariPool - Shutdown initiated...
+2026-02-18T22:49:01.252+05:30  INFO 4788 --- [waba-service] [SpringApplicationShutdownHook] com.zaxxer.hikari.HikariDataSource       : WabaHikariPool - Shutdown completed.
