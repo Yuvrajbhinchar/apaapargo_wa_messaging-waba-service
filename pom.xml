@@ -48,11 +48,6 @@
             <scope>runtime</scope>
         </dependency>
 
-        <!-- Flyway — DB migrations (replaces ddl-auto: create) -->
-        <dependency>
-            <groupId>org.flywaydb</groupId>
-            <artifactId>flyway-core</artifactId>
-        </dependency>
 
         <!-- ============================
              VALIDATION
@@ -135,11 +130,7 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
-        <dependency>
-            <groupId>org.springframework.security</groupId>
-            <artifactId>spring-security-test</artifactId>
-            <scope>test</scope>
-        </dependency>
+
 
     </dependencies>
 

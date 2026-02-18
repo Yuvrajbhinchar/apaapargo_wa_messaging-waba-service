@@ -1,8 +1,5 @@
 server:
   port: 8081
-  servlet:
-    context-path: /
-  # Graceful shutdown — waits for in-flight requests before stopping
   shutdown: graceful
 
 spring:
@@ -12,47 +9,50 @@ spring:
   lifecycle:
     timeout-per-shutdown-phase: 30s
 
+  # ─────────────────────────────────────────────────────────
+  # DATABASE
+  # Override via env vars in production:
+  #   DB_URL, DB_USERNAME, DB_PASSWORD
+  # For local dev: update username/password to match your MySQL
+  # ─────────────────────────────────────────────────────────
   datasource:
-    url: ${DB_URL:jdbc:mysql://localhost:3306/apargo_wa_messaging?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true}
+    url: ${DB_URL:jdbc:mysql://localhost:3306/apargo_wa_messaging?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true&createDatabaseIfNotExist=true}
     username: root
     password: yuvraj@3933
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
+      pool-name: WabaHikariPool
       maximum-pool-size: 10
       minimum-idle: 5
       connection-timeout: 30000
       idle-timeout: 600000
       max-lifetime: 1800000
-      pool-name: WabaHikariPool
-      # Critical for microservices — detect dead connections
       keepalive-time: 60000
       connection-test-query: SELECT 1
 
   jpa:
     hibernate:
-      # Flyway owns schema — JPA must NOT touch it
-      ddl-auto: validate
+      ddl-auto: validate           # Flyway owns schema — JPA only validates
       naming:
         physical-strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
     show-sql: false
-    open-in-view: false   # Prevent OSIV anti-pattern
+    open-in-view: false
     properties:
       hibernate:
         dialect: org.hibernate.dialect.MySQLDialect
-        format_sql: true
-        use_sql_comments: false
         jdbc:
           batch_size: 20
         order_inserts: true
         order_updates: true
 
-  # Flyway — auto-runs migrations from db/migration/
+  # ─────────────────────────────────────────────────────────
+  # FLYWAY — runs V1__init_schema.sql on startup automatically
+  # ─────────────────────────────────────────────────────────
   flyway:
     enabled: true
     locations: classpath:db/migration
     baseline-on-migrate: true
     validate-on-migrate: true
-    out-of-order: false
 
   jackson:
     deserialization:
@@ -61,63 +61,53 @@ spring:
     serialization:
       write-dates-as-timestamps: false
 
-# =====================================
-# META CLOUD API (Direct Tech Partner)
-# =====================================
+# ─────────────────────────────────────────────────────────────
+# META CLOUD API — Direct Tech Partner (no BSP)
+# Set real values via env vars in production
+# ─────────────────────────────────────────────────────────────
 meta:
   app-id: ${META_APP_ID:your-meta-app-id}
   app-secret: ${META_APP_SECRET:your-meta-app-secret}
   api-version: v21.0
   graph-api-base-url: https://graph.facebook.com
   webhook-verify-token: ${WEBHOOK_VERIFY_TOKEN:aigreentick-verify-token}
-  # Allowed origins for embedded signup redirect (CORS)
-  allowed-origins: ${ALLOWED_ORIGINS:http://localhost:3000,https://app.aigreentick.com}
+  # Optional: your Embedded Signup Config ID from Meta App Dashboard
+  embedded-signup-config-id: ${META_EMBEDDED_SIGNUP_CONFIG_ID:}
 
-# =====================================
-# RESILIENCE4J — Production Config
-# Circuit Breaker + Retry + Rate Limiter
-# =====================================
+# ─────────────────────────────────────────────────────────────
+# RESILIENCE4J — Fault tolerance for Meta API calls
+# ─────────────────────────────────────────────────────────────
 resilience4j:
 
   circuitbreaker:
     instances:
       metaApi:
-        # Opens circuit after 50% failure rate in last 10 calls
         sliding-window-type: COUNT_BASED
         sliding-window-size: 10
         failure-rate-threshold: 50
-        # Also trips on slow calls > 10s
         slow-call-rate-threshold: 80
         slow-call-duration-threshold: 10s
-        # In HALF_OPEN state, let 3 calls through to test
         permitted-number-of-calls-in-half-open-state: 3
-        # Stay OPEN for 30s, then auto-transition to HALF_OPEN
         wait-duration-in-open-state: 30s
         automatic-transition-from-open-to-half-open-enabled: true
-        # Record these as failures
         record-exceptions:
           - com.aigreentick.services.wabaaccounts.exception.MetaApiException
           - java.io.IOException
           - java.util.concurrent.TimeoutException
-        # Do NOT count 4xx as circuit breaker failures
         ignore-exceptions:
           - com.aigreentick.services.wabaaccounts.exception.MetaApiException.ClientException
 
   retry:
     instances:
       metaApi:
-        # 3 attempts total (1 original + 2 retries)
         max-attempts: 3
-        # Wait 1s, then 2s (exponential backoff)
         wait-duration: 1s
         enable-exponential-backoff: true
         exponential-backoff-multiplier: 2.0
         exponential-max-wait-duration: 8s
-        # Retry on server errors only
         retry-exceptions:
           - com.aigreentick.services.wabaaccounts.exception.MetaApiException
           - java.io.IOException
-        # Never retry on client errors (4xx)
         ignore-exceptions:
           - com.aigreentick.services.wabaaccounts.exception.MetaApiException.ClientException
           - java.lang.IllegalArgumentException
@@ -125,74 +115,50 @@ resilience4j:
   ratelimiter:
     instances:
       metaApi:
-        # Meta Graph API rate limit: 200 calls/hour per token
-        # We set conservative limit — 80 calls per minute
         limit-for-period: 80
         limit-refresh-period: 1m
-        # Don't wait if rate limit hit — fail fast
         timeout-duration: 0s
 
-  # Metrics config — exposes Resilience4j metrics to Actuator/Prometheus
-  metrics:
-    enabled: true
-    circuitbreakers:
-      enabled: true
-
-# =====================================
-# LOGGING
-# =====================================
-logging:
-  level:
-    root: INFO
-    com.aigreentick.services.wabaaccounts: DEBUG
-    org.springframework.web: INFO
-    org.hibernate.SQL: DEBUG
-    org.hibernate.type.descriptor.sql.BasicBinder: TRACE
-    io.github.resilience4j: INFO
-  pattern:
-    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
-  file:
-    name: logs/waba-service.log
-
-# =====================================
-# ACTUATOR — Monitoring
-# =====================================
+# ─────────────────────────────────────────────────────────────
+# ACTUATOR
+# ─────────────────────────────────────────────────────────────
 management:
   endpoints:
     web:
       exposure:
-        # Expose health, metrics, Prometheus, circuit breaker info
-        include: health,info,metrics,prometheus,circuitbreakers,retries,ratelimiters
+        include: health,info,metrics,prometheus,circuitbreakers,retries
   endpoint:
     health:
       show-details: always
       probes:
         enabled: true
   health:
-    db:
-      enabled: true
-    diskspace:
-      enabled: true
     circuitbreakers:
       enabled: true
   metrics:
-    export:
-      prometheus:
-        enabled: true
     tags:
       application: ${spring.application.name}
-      environment: ${SPRING_PROFILES_ACTIVE:default}
 
-# =====================================
-# SWAGGER / OPENAPI
-# =====================================
+# ─────────────────────────────────────────────────────────────
+# SWAGGER
+# ─────────────────────────────────────────────────────────────
 springdoc:
   api-docs:
     path: /api-docs
   swagger-ui:
     path: /swagger-ui.html
     enabled: true
-    operations-sorter: method
-    tags-sorter: alpha
-    # Expand all sections by default
-    doc-expansion: list
+
+# ─────────────────────────────────────────────────────────────
+# LOGGING
+# ─────────────────────────────────────────────────────────────
+logging:
+  level:
+    root: INFO
+    com.aigreentick.services.wabaaccounts: DEBUG
+    org.springframework.web: INFO
+    org.hibernate.SQL: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    name: logs/waba-service.log

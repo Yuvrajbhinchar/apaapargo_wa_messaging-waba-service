@@ -5,10 +5,12 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Configuration properties for Meta (Facebook) Cloud API
+ * Configuration properties for Meta (Facebook) Cloud API.
  *
- * Direct integration — AiGreenTick is a Meta Tech Partner.
- * No BSP (Business Solution Provider) middleware required.
+ * AiGreenTick is a Meta Tech Partner — direct Cloud API integration, no BSP.
+ *
+ * All sensitive values MUST come from environment variables in production:
+ *   META_APP_ID, META_APP_SECRET, WEBHOOK_VERIFY_TOKEN
  */
 @Configuration
 @Getter
@@ -30,11 +32,10 @@ public class MetaApiConfig {
     private String webhookVerifyToken;
 
     /**
-     * Builds a full Graph API URL for a given path
-     * Example: buildUrl("123456/phone_numbers") →
-     *          https://graph.facebook.com/v21.0/123456/phone_numbers
+     * Optional: Embedded Signup Configuration ID from Meta App Dashboard.
+     * Set via META_EMBEDDED_SIGNUP_CONFIG_ID env var.
+     * Frontend uses this as the config_id in FB.login() call.
      */
-    public String buildUrl(String path) {
-        return graphApiBaseUrl + "/" + apiVersion + "/" + path;
-    }
+    @Value("${meta.embedded-signup-config-id:}")
+    private String embeddedSignupConfigId;
 }
