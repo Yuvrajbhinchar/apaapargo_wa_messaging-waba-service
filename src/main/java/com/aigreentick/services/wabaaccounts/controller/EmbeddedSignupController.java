@@ -20,8 +20,8 @@ import org.springframework.web.bind.annotation.*;
 /**
  * REST Controller for Meta WhatsApp Embedded Signup flow.
  *
- * This is the onboarding entry point — equivalent to what WATI, AiSensy,
- * Interakt expose as their "Connect WhatsApp" feature.
+ * This is the onboarding entry point — equivalent to
+ * expose as "Connect WhatsApp" feature.
  *
  * Endpoints:
  *   GET  /api/v1/embedded-signup/config    → SDK configuration for frontend

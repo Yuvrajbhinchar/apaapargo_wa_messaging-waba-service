@@ -3,6 +3,8 @@ package com.aigreentick.services.wabaaccounts.entity;
 import com.aigreentick.services.wabaaccounts.constants.WabaStatus;
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -41,9 +43,11 @@ public class WabaAccount {
     private WabaStatus status;
 
     @Column(name = "created_at", updatable = false, insertable = false)
+    @CreationTimestamp
     private LocalDateTime createdAt;
 
     @Column(name = "updated_at", insertable = false)
+    @UpdateTimestamp
     private LocalDateTime updatedAt;
 
     // Relationships

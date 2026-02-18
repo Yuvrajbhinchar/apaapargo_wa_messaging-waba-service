@@ -5,6 +5,8 @@ import com.aigreentick.services.wabaaccounts.constants.PhoneNumberStatus;
 import com.aigreentick.services.wabaaccounts.constants.QualityRating;
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDateTime;
 
@@ -51,9 +53,11 @@ public class WabaPhoneNumber {
     private MessagingLimitTier messagingLimitTier;
 
     @Column(name = "created_at", updatable = false, insertable = false)
+    @CreationTimestamp
     private LocalDateTime createdAt;
 
     @Column(name = "updated_at", insertable = false)
+    @UpdateTimestamp
     private LocalDateTime updatedAt;
 
     // Relationship

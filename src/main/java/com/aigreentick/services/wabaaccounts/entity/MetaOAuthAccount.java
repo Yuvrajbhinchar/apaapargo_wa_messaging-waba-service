@@ -2,6 +2,7 @@ package com.aigreentick.services.wabaaccounts.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.CreationTimestamp;
 
 import java.time.LocalDateTime;
 
@@ -35,6 +36,7 @@ public class MetaOAuthAccount {
     private LocalDateTime expiresAt;
 
     @Column(name = "created_at", updatable = false, insertable = false)
+    @CreationTimestamp
     private LocalDateTime createdAt;
 
     /**

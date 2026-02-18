@@ -92,6 +92,7 @@ public class EmbeddedSignupService {
                 .scopes(REQUIRED_SCOPES)
                 .extrasJson(buildExtrasJson())
                 .callbackEndpoint("/api/v1/embedded-signup/callback")
+                .configId(metaApiConfig.getEmbeddedSignupConfigId())
                 .build();
     }
 
