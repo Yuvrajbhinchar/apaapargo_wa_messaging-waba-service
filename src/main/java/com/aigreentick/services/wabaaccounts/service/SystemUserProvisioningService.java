@@ -26,25 +26,15 @@ import java.util.Map;
 /**
  * PHASE 2 — System User Provisioning
  *
- * ─── v6 Fix: MetaApiResponse DTO mismatch ───────────────────────────────
- * FIX (BLOCKER 1): All three Meta API calls in this service now read responses correctly.
+ * ─── BLOCKER 1 FIX: generateSystemUserToken() ───────────────────────────
+ * Meta's POST /{systemUserId}/access_tokens returns a FLAT response:
+ *   { "access_token": "EAA...", "token_type": "bearer" }
  *
- * createSystemUser:
- *   POST /{businessId}/system_users returns { "id": "sys_user_id" }
- *   → "id" is at top level → lands in extras → read via getId() which checks extras first
+ * "access_token" lands in extras via @JsonAnySetter — NOT in data wrapper.
+ * OLD BROKEN: response.getData().get("access_token") → getData() = null → NPE
+ * NEW FIXED:  response.getFlatValue("access_token")  → checks extras first
  *
- * assignWabaToSystemUser:
- *   POST /{wabaId}/assigned_users returns { "success": true }
- *   → isOk() handles this correctly (no change needed)
- *
- * generateSystemUserToken:
- *   POST /{systemUserId}/access_tokens returns { "access_token": "...", "token_type": "bearer" }
- *   → FLAT response → access_token lands in extras → read via getFlatValue()
- *   OLD BROKEN: response.getData().get("access_token") → getData() = null → NPE
- *
- * resolveBusinessManagerId:
- *   GET /{wabaId}?fields=... returns flat object → business_id in extras
- *   → read via getFlatValue("business_id")
+ * Same fix applied to resolveBusinessManagerId — business_id is also flat.
  */
 @Service
 @RequiredArgsConstructor
@@ -177,12 +167,7 @@ public class SystemUserProvisioningService {
      * Step 1: Create System User.
      * POST /{businessId}/system_users
      * Returns: { "id": "sys_user_123" } — flat response, id lands in extras.
-     *
-     * FIX: Use response.getId() which checks extras first.
-     * OLD BROKEN: response.getData().get("id") → getData() = null → NPE
      */
-
-
     private String createSystemUser(String businessManagerId, String accessToken) {
         log.info("Creating system user in Business Manager: {}", businessManagerId);
 
@@ -193,10 +178,6 @@ public class SystemUserProvisioningService {
                 accessToken
         );
 
-        // M3 FIX: Meta returns { "id": "12345" } at top level — no "success" key,
-        // no "data" wrapper. getId() checks extras then data, matching the actual
-        // response shape. The old Boolean.TRUE.equals(response.getSuccess()) was
-        // always false here, and getData().get("id") would NPE (data is null).
         String systemUserId = response.getId();
 
         if (!response.isOk() || systemUserId == null || systemUserId.isBlank()) {
@@ -219,8 +200,6 @@ public class SystemUserProvisioningService {
         var response = metaApiClient.assignWabaToSystemUser(
                 wabaId, systemUserId, accessToken);
 
-        // Meta returns { "success": true } for this endpoint — isOk() handles both
-        // "success": true and absence-of-error cases, so this is correct.
         if (!response.isOk()) {
             throw new InvalidRequestException(
                     "Failed to assign WABA " + wabaId + " to system user " + systemUserId +
@@ -230,6 +209,27 @@ public class SystemUserProvisioningService {
         }
     }
 
+    /**
+     * Step 3: Generate permanent token for system user.
+     *
+     * POST /{systemUserId}/access_tokens returns FLAT response:
+     *   { "access_token": "EAA...", "token_type": "bearer" }
+     *
+     * ════════════════════════════════════════════════════════════
+     * BLOCKER 1 FIX:
+     * ════════════════════════════════════════════════════════════
+     * OLD BROKEN CODE:
+     *   if (response.getData() == null) { throw ... }        ← getData() always null for flat
+     *   Object token = response.getData().get("access_token") ← NPE guaranteed
+     *
+     * NEW FIXED CODE:
+     *   Object token = response.getFlatValue("access_token")  ← checks extras first
+     *
+     * getFlatValue() checks extras (where flat fields land via @JsonAnySetter)
+     * then falls back to dataAsMap. This matches how exchangeCodeForToken and
+     * extendToLongLivedToken correctly read their flat responses.
+     * ════════════════════════════════════════════════════════════
+     */
     private String generateSystemUserToken(String systemUserId,
                                            String appSecretProof,
                                            String accessToken) {
@@ -243,9 +243,6 @@ public class SystemUserProvisioningService {
                 accessToken
         );
 
-        // Meta returns { "access_token": "...", "token_type": "bearer" } in data.
-        // isOk() is correct here — this endpoint does NOT return a top-level "success".
-        // Null-check data before accessing it to avoid NPE if Meta returns unexpected shape.
         if (!response.isOk()) {
             throw new InvalidRequestException(
                     "Failed to generate permanent system user token." +
@@ -254,16 +251,16 @@ public class SystemUserProvisioningService {
                                     : " Ensure the Meta App is in Live mode with required permissions approved."));
         }
 
-        if (response.getData() == null) {
-            throw new InvalidRequestException(
-                    "Meta returned no data for system user token generation. " +
-                            "Check app permissions: whatsapp_business_management, " +
-                            "whatsapp_business_messaging, business_management must all be approved.");
-        }
+        // ═══ BLOCKER 1 FIX ═══
+        // Meta returns { "access_token": "...", "token_type": "bearer" } as FLAT JSON.
+        // "access_token" lands in extras via @JsonAnySetter — NOT in data wrapper.
+        // getFlatValue() checks extras first, then dataAsMap fallback.
+        Object token = response.getFlatValue("access_token");
 
-        Object token = response.getData().get("access_token");
         if (token == null || String.valueOf(token).isBlank()
                 || "null".equals(String.valueOf(token))) {
+            log.error("System user token generation returned no access_token. " +
+                    "Extras: {}, Data: {}", response.getExtras(), response.getDataAsMap());
             throw new InvalidRequestException(
                     "Meta returned an empty permanent token. " +
                             "Check app permissions: whatsapp_business_management, " +
@@ -272,6 +269,7 @@ public class SystemUserProvisioningService {
 
         return String.valueOf(token);
     }
+
     // ════════════════════════════════════════════════════════════
     // PRIVATE — DB + HELPERS
     // ════════════════════════════════════════════════════════════
@@ -307,8 +305,6 @@ public class SystemUserProvisioningService {
      * Resolve Business Manager ID from WABA details.
      * GET /{wabaId}?fields=business_id returns FLAT object.
      * business_id lands in extras → use getFlatValue()
-     *
-     * FIX: use getFlatValue("business_id") instead of getData().get("business_id")
      */
     private String resolveBusinessManagerId(List<WabaAccount> wabas, String accessToken) {
         WabaAccount firstWaba = wabas.get(0);
@@ -317,8 +313,6 @@ public class SystemUserProvisioningService {
             MetaApiResponse wabaDetails = metaApiClient.getWabaDetails(firstWaba.getWabaId(), accessToken);
 
             if (wabaDetails.isOk()) {
-                // WABA details: { "id": "...", "business_id": "...", "name": "..." }
-                // Flat response → fields land in extras
                 Object bizId = wabaDetails.getFlatValue("business_id");
                 if (bizId != null && !String.valueOf(bizId).isBlank() && !"null".equals(String.valueOf(bizId))) {
                     log.info("Business Manager ID resolved from WABA {}: {}", firstWaba.getWabaId(), bizId);

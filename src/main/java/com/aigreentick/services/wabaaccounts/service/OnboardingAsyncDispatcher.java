@@ -13,44 +13,23 @@ import org.springframework.stereotype.Service;
  * Onboarding Async Dispatcher
  * ══════════════════════════════════════════════════════════════════
  *
- * WHY THIS CLASS EXISTS — BLOCKER 2: Spring AOP Self-Invocation
- * ──────────────────────────────────────────────────────────────
- * Spring @Async works via AOP proxy. When bean A calls a method on
- * itself (this.method()), it bypasses the proxy. @Async is silently
- * ignored and the method runs on the calling thread.
- *
- * The original OnboardingOrchestrator.enqueue() did exactly this:
- *
- *   processTaskAsync(task.getId(), request);  // self-invocation → @Async ignored
- *   return task.getId();                       // "returned immediately" but blocked 8-12s
- *
- * Proof: thread names in logs showed "http-nio-8080-exec-N" instead of
- * "waba-onboarding-N". Every signup blocked the HTTP thread.
- *
- * THE FIX
- * ────────
  * @Async lives HERE. OnboardingOrchestrator calls dispatcher.dispatch() —
  * a cross-bean call. Spring proxy intercepts it. @Async is honoured.
  * HTTP thread returns < 100ms with the task ID.
  *
- * CIRCULAR DEPENDENCY — SOLVED
- * ─────────────────────────────
- * We cannot inject OnboardingOrchestrator here (that creates a cycle:
- *   Orchestrator → Dispatcher → Orchestrator).
+ * ═══ OAuth Retry Safety ═══════════════════════════════════════════
+ * Meta OAuth codes are SINGLE-USE. Once exchanged for a token in Step A
+ * of processSignupCallback(), the code is consumed and cannot be reused.
  *
- * Solution: OnboardingTaskStateService owns the mark* DB methods.
- * Both Orchestrator and Dispatcher inject it. No cycle.
+ * If the task previously reached PROCESSING state (startedAt != null),
+ * the code was very likely consumed. Retrying will hit Meta with an
+ * already-used code → "This authorization code has been used" error.
  *
- * Acyclic dependency graph:
- *   OnboardingOrchestrator ──────────────► OnboardingAsyncDispatcher
- *          │                                        │
- *          └──────────► OnboardingTaskStateService ◄┘
- *                       (leaf bean, no further deps on these two)
+ * Guard: redispatch() checks if the code was likely consumed.
+ * If so, marks the task as permanently failed with a clear message
+ * instead of wasting 3 retry attempts that are guaranteed to fail.
  *
- * NOTE: dispatch() is @Async ONLY — never @Transactional here.
- * @Async switches threads. @Transactional is thread-bound. Putting both
- * on the same method opens and commits the transaction before any real work.
- * DB writes go through OnboardingTaskStateService from the async thread.
+ * The user must restart the embedded signup flow to get a fresh code.
  */
 @Service
 @RequiredArgsConstructor
@@ -69,7 +48,7 @@ public class OnboardingAsyncDispatcher {
      * HOW TO VERIFY THE FIX IS WORKING:
      *   Check logs after a signup. You must see:
      *     "Onboarding task picked up on thread [waba-onboarding-1]"
-     *   If you see "http-nio-8080-exec-*" — self-invocation is back.
+     *   If you see "http-nio-8081-exec-*" — self-invocation is back.
      */
     @Async("onboardingTaskExecutor")
     public void dispatch(Long taskId, EmbeddedSignupCallbackRequest request) {
@@ -93,12 +72,42 @@ public class OnboardingAsyncDispatcher {
     /**
      * Re-dispatch a failed task for retry.
      *
-     * OAuth codes are single-use. Retries only help if the code was never
-     * consumed (worker died before step A of token exchange). After 3 attempts,
-     * the task stays FAILED permanently — user needs a fresh signup.
+     * ═══ OAuth Retry Safety Guard ═══
+     *
+     * OAuth codes are single-use. If this task previously reached PROCESSING
+     * (startedAt != null), then dispatch() was called before, which called
+     * processSignupCallback() → exchangeCodeForToken(). Even if the
+     * subsequent steps failed, the code is already consumed by Meta.
+     *
+     * Retrying with the same code is GUARANTEED to fail:
+     *   Meta returns: "This authorization code has been used"
+     *
+     * Instead of wasting 3 retry attempts on a dead code, we immediately
+     * mark the task as permanently failed with a clear message telling
+     * the customer to restart the signup flow.
+     *
+     * When IS a retry useful?
+     *   - Task failed BEFORE reaching PROCESSING (e.g., DB error on save)
+     *     → startedAt is null → code was never sent to Meta → retry is safe
      */
     @Async("onboardingTaskExecutor")
     public void redispatch(OnboardingTask task) {
+        log.info("Retry requested for onboarding task: taskId={}, attempt={}, startedAt={}",
+                task.getId(), task.getRetryCount() + 1, task.getStartedAt());
+
+        // ═══ OAuth Retry Safety Guard ═══
+        if (task.getStartedAt() != null) {
+            // Task previously reached PROCESSING → code was likely consumed by Meta
+            String msg = "OAuth code already consumed (task previously reached PROCESSING at " +
+                    task.getStartedAt() + "). " +
+                    "Meta OAuth codes are single-use and cannot be retried. " +
+                    "Customer must restart the embedded signup flow to get a fresh code.";
+            log.warn("Skipping retry for taskId={}: {}", task.getId(), msg);
+            taskStateService.markFailed(task.getId(), msg);
+            return;
+        }
+
+        // Code was never consumed — safe to retry
         log.info("Retrying onboarding task on thread [{}]: taskId={}, attempt={}",
                 Thread.currentThread().getName(), task.getId(), task.getRetryCount() + 1);
 

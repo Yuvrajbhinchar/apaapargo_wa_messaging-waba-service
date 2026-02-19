@@ -12,6 +12,7 @@ import com.aigreentick.services.wabaaccounts.exception.WabaNotFoundException;
 import com.aigreentick.services.wabaaccounts.mapper.WabaMapper;
 import com.aigreentick.services.wabaaccounts.repository.MetaOAuthAccountRepository;
 import com.aigreentick.services.wabaaccounts.repository.WabaAccountRepository;
+import com.aigreentick.services.wabaaccounts.security.TokenEncryptionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -26,13 +27,23 @@ import java.util.List;
 /**
  * Service for WABA Account lifecycle management.
  *
- * ─── Senior Review Fix (BLOCKER 2) ────────────────────────────────────────
- * saveOrUpdateOAuthAccount() now looks up by organizationId only.
- * Removed the businessManagerId lookup — the token belongs to the org, not the BM.
+ * ═══════════════════════════════════════════════════════════════════
+ * BLOCKER 2 FIX: syncPhoneNumbers() was sending encrypted token to Meta
+ * ═══════════════════════════════════════════════════════════════════
  *
- * ─── Senior Review Fix (BLOCKER 1 — Race Condition) ───────────────────────
- * createWabaAccount() now catches DataIntegrityViolationException on save
- * and maps it to DuplicateWabaException with a friendly message.
+ * oauthAccount.getAccessToken() returns "ENC:..." (encrypted at rest).
+ * This service previously passed that directly to Meta → 401 every time.
+ *
+ * FIX: Injected TokenEncryptionService, decrypt before all Meta API calls.
+ *
+ * ═══════════════════════════════════════════════════════════════════
+ * ADDITIONAL FIX: saveOrUpdateOAuthAccount() now ENCRYPTS tokens
+ * ═══════════════════════════════════════════════════════════════════
+ *
+ * The direct REST endpoint POST /api/v1/waba-accounts called
+ * saveOrUpdateOAuthAccount() which stored request.getAccessToken() in
+ * PLAINTEXT. EmbeddedSignupService correctly encrypts, but this path
+ * did not. Now both paths encrypt consistently.
  */
 @Service
 @RequiredArgsConstructor
@@ -43,6 +54,7 @@ public class WabaService {
     private final MetaOAuthAccountRepository metaOAuthRepository;
     private final MetaApiClient metaApiClient;
     private final PhoneNumberService phoneNumberService;
+    private final TokenEncryptionService tokenEncryptionService;  // ← BLOCKER 2 FIX: added
 
     // ========================
     // CREATE
@@ -77,7 +89,9 @@ public class WabaService {
         }
 
         try {
-            phoneNumberService.syncPhoneNumbersFromMeta(wabaAccount, oauthAccount.getAccessToken());
+            // FIX: decrypt token before passing to Meta API
+            String decryptedToken = tokenEncryptionService.decrypt(oauthAccount.getAccessToken());
+            phoneNumberService.syncPhoneNumbersFromMeta(wabaAccount, decryptedToken);
         } catch (Exception ex) {
             log.warn("Phone number sync skipped during WABA creation. Error: {}", ex.getMessage());
         }
@@ -131,6 +145,18 @@ public class WabaService {
         return WabaMapper.toWabaResponse(waba);
     }
 
+    /**
+     * Manual phone sync triggered via REST endpoint.
+     *
+     * ═══ BLOCKER 2 FIX ═══
+     * OLD BROKEN:
+     *   phoneNumberService.syncPhoneNumbersFromMeta(waba, oauthAccount.getAccessToken());
+     *   → oauthAccount.getAccessToken() returns "ENC:..." → Meta gets 401
+     *
+     * NEW FIXED:
+     *   String decryptedToken = tokenEncryptionService.decrypt(oauthAccount.getAccessToken());
+     *   phoneNumberService.syncPhoneNumbersFromMeta(waba, decryptedToken);
+     */
     @Transactional
     public WabaResponse syncPhoneNumbers(Long wabaId) {
         log.info("Manual phone sync triggered for wabaId={}", wabaId);
@@ -139,7 +165,11 @@ public class WabaService {
         MetaOAuthAccount oauthAccount = metaOAuthRepository.findById(waba.getMetaOAuthAccountId())
                 .orElseThrow(() -> new WabaNotFoundException(
                         "OAuth account not found for WABA: " + wabaId));
-        phoneNumberService.syncPhoneNumbersFromMeta(waba, oauthAccount.getAccessToken());
+
+        // ═══ BLOCKER 2 FIX: decrypt before use ═══
+        String decryptedToken = tokenEncryptionService.decrypt(oauthAccount.getAccessToken());
+        phoneNumberService.syncPhoneNumbersFromMeta(waba, decryptedToken);
+
         return WabaMapper.toWabaResponseWithPhones(
                 wabaRepository.findByIdWithPhoneNumbers(wabaId)
                         .orElseThrow(() -> WabaNotFoundException.withId(wabaId))
@@ -165,21 +195,26 @@ public class WabaService {
     // ========================
 
     /**
-     * FIX (BLOCKER 2): Look up OAuth account by organizationId only.
+     * Save or update OAuth account for an organization.
      *
-     * Old: findByOrganizationIdAndBusinessManagerId(orgId, bmId)
-     *   → Created a new row for each Business Manager the user had
-     *   → Same user connecting 2nd WABA from different BM = 2 OAuth rows
+     * ═══ ADDITIONAL FIX: Token encryption on the direct REST path ═══
      *
-     * New: findByOrganizationId(orgId)
-     *   → One token per org. If org already has a token, we refresh it.
-     *   → All WABAs under the org share the same OAuth account.
+     * The embedded signup flow (EmbeddedSignupService) encrypts tokens
+     * before saving. But the direct REST endpoint POST /api/v1/waba-accounts
+     * calls this method, which previously stored the access token in PLAINTEXT.
+     *
+     * OLD BROKEN:
+     *   existing.setAccessToken(request.getAccessToken());  // plaintext!
+     *
+     * NEW FIXED:
+     *   existing.setAccessToken(tokenEncryptionService.encrypt(request.getAccessToken()));
      */
     private MetaOAuthAccount saveOrUpdateOAuthAccount(CreateWabaRequest request) {
         return metaOAuthRepository
                 .findByOrganizationId(request.getOrganizationId())
                 .map(existing -> {
-                    existing.setAccessToken(request.getAccessToken());
+                    // ═══ FIX: encrypt token before saving ═══
+                    existing.setAccessToken(tokenEncryptionService.encrypt(request.getAccessToken()));
                     if (request.getExpiresIn() != null) {
                         existing.setExpiresAt(LocalDateTime.now().plusSeconds(request.getExpiresIn()));
                     }
@@ -187,9 +222,10 @@ public class WabaService {
                     return metaOAuthRepository.save(existing);
                 })
                 .orElseGet(() -> {
+                    // ═══ FIX: encrypt token before saving ═══
                     MetaOAuthAccount newAccount = MetaOAuthAccount.builder()
                             .organizationId(request.getOrganizationId())
-                            .accessToken(request.getAccessToken())
+                            .accessToken(tokenEncryptionService.encrypt(request.getAccessToken()))
                             .expiresAt(request.getExpiresIn() != null
                                     ? LocalDateTime.now().plusSeconds(request.getExpiresIn())
                                     : null)

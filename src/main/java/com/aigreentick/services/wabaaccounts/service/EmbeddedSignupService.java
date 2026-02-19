@@ -31,18 +31,33 @@ import java.util.Map;
 /**
  * Handles the complete Meta WhatsApp Embedded Signup flow.
  *
- * ─── v6 Fix: MetaApiResponse DTO mismatch ───────────────────────────────
- * FIX (BLOCKER 1): Meta returns FLAT JSON for token endpoints, not { data: {...} }.
- *   - exchangeCodeForToken: reads from extras (access_token at top level)
- *   - extendToLongLivedToken: reads from extras (access_token/expires_in at top level)
- *   - verifyOAuthScopes: uses getDataAsList() for { data: [...] } permission arrays
- *   - discoverWabaId: uses getDataAsList() for { data: [...] } business arrays
- *   - resolveBusinessManagerId: uses getDataAsMap() for WABA details object
+ * ═══════════════════════════════════════════════════════════════════
+ * TRANSACTION BOUNDARY FIX
+ * ═══════════════════════════════════════════════════════════════════
  *
- * ─── Transaction design ─────────────────────────────────────────────────
- *   BEFORE TX  → All Meta API calls (token exchange, extension, verification)
- *   INSIDE TX  → Pure DB writes only — fast, no external I/O
- *   AFTER SAVE → Best-effort side effects (webhook, phone sync, registration, SMB sync)
+ * PROBLEM:
+ * saveOnboardingData() was @Transactional but called external HTTP:
+ *   - subscribeAndVerifyWebhook()              → 10-30s HTTP to Meta
+ *   - phoneNumberService.syncPhoneNumbersFromMeta() → 5-15s HTTP to Meta
+ *
+ * This held a DB connection open for the entire duration of both calls.
+ * With Hikari max-pool-size=10 and 10 concurrent signups, all connections
+ * are occupied waiting on Meta, and the next signup blocks on Hikari's
+ * connection-timeout (30s), then fails with a timeout exception.
+ *
+ * FIX:
+ * Renamed the transactional method to persistOnboardingData() — pure DB writes only.
+ * Moved webhook subscribe + phone sync to processSignupCallback() which is NOT
+ * transactional. DB connection is released after commit, then external calls happen.
+ *
+ * NEW FLOW:
+ *   BEFORE TX  → Steps A-F: All Meta API calls (no DB connection held)
+ *   INSIDE TX  → Step G: persistOnboardingData() — pure DB writes (< 50ms)
+ *   AFTER TX   → Step G2: webhookSubscribe (best-effort, HTTP)
+ *              → Step G3: phoneSyncFromMeta (best-effort, HTTP)
+ *              → Step H: phoneRegistration (best-effort, HTTP)
+ *              → Step I: smbSync (best-effort, HTTP)
+ *              → Step J: phase2 systemUser (best-effort, HTTP)
  */
 @Service
 @RequiredArgsConstructor
@@ -66,11 +81,6 @@ public class EmbeddedSignupService {
     );
     private static final String REQUIRED_SCOPES_CSV = String.join(",", REQUIRED_SCOPES);
 
-    /**
-     * Minimum seconds for a token to be considered long-lived.
-     * Short-lived tokens are ~1 hour (3600s). Long-lived are ~60 days (5,184,000s).
-     * We use 7 days as threshold to catch tokens that are long but not full 60-day.
-     */
     private static final long MIN_LONG_LIVED_SECONDS = 7L * 24 * 3600;
 
     // ════════════════════════════════════════════════════════════
@@ -89,40 +99,60 @@ public class EmbeddedSignupService {
     }
 
     // ════════════════════════════════════════════════════════════
-    // MAIN FLOW
+    // MAIN FLOW — NOT @Transactional (external calls happen here)
     // ════════════════════════════════════════════════════════════
 
     public EmbeddedSignupResponse processSignupCallback(EmbeddedSignupCallbackRequest request) {
         log.info("Embedded signup started: orgId={}, coexistence={}",
                 request.getOrganizationId(), request.isCoexistenceFlow());
 
-        // Step A: Exchange OAuth code for short-lived token
-        // FIX: Meta returns flat JSON — access_token is at top level, not in data wrapper
+        // ── Step A: Exchange OAuth code for short-lived token ──
         String shortLivedToken = exchangeCodeForToken(request.getCode());
 
-        // Step B: Extend to long-lived user token (~60 days)
-        // FIX: Same flat response pattern — read from extras, not getData()
+        // ── Step B: Extend to long-lived user token (~60 days) ──
         TokenResult tokenResult = extendToLongLivedToken(shortLivedToken);
         log.info("Long-lived token obtained. Expires ~{} days", tokenResult.expiresIn() / 86400);
 
-        // Step C: Verify all required OAuth scopes were granted
-        // FIX: Uses getDataAsList() because /me/permissions returns { data: [...] }
+        // ── Step C: Verify all required OAuth scopes ──
         verifyOAuthScopes(tokenResult.accessToken());
 
-        // Step D: Resolve WABA ID and verify ownership
+        // ── Step D: Resolve WABA ID and verify ownership ──
         String wabaId = resolveAndVerifyWabaOwnership(request, tokenResult.accessToken());
 
-        // Step E: Resolve Business Manager ID
+        // ── Step E: Resolve Business Manager ID ──
         String businessManagerId = resolveBusinessManagerId(request, wabaId, tokenResult.accessToken());
 
-        // Step F: Resolve phone number ID (coexistence flow auto-discovers)
+        // ── Step F: Resolve phone number ID (coexistence auto-discovers) ──
         String resolvedPhoneNumberId = resolvePhoneNumberId(request, wabaId, tokenResult.accessToken());
 
-        // Step G: All DB writes in one tight transaction
-        EmbeddedSignupResponse result = saveOnboardingData(
+        // ══════════════════════════════════════════════════════════
+        // Step G: DB writes — tight transaction, no external I/O
+        // persistOnboardingData() is @Transactional. DB connection
+        // is acquired, writes execute (< 50ms), connection released.
+        // ══════════════════════════════════════════════════════════
+        PersistedOnboardingData saved = persistOnboardingData(
                 request, tokenResult, wabaId, businessManagerId);
 
-        // Step H: Register phone number with Meta (best-effort, non-blocking)
+        // ══════════════════════════════════════════════════════════
+        // Steps G2-J: Best-effort side effects — OUTSIDE transaction
+        // DB connection is already released. These are all HTTP calls
+        // to Meta that can take 5-30s each. No DB connection is held.
+        // ══════════════════════════════════════════════════════════
+
+        // ── Step G2: Webhook subscribe (best-effort) ──
+        boolean webhookOk = subscribeAndVerifyWebhook(wabaId, tokenResult.accessToken());
+
+        // ── Step G3: Phone number sync from Meta (best-effort) ──
+        List<PhoneNumberResponse> phoneNumbers = new ArrayList<>();
+        try {
+            phoneNumberService.syncPhoneNumbersFromMeta(saved.waba(), tokenResult.accessToken());
+            phoneNumbers = phoneNumberService.getPhoneNumbersByWaba(saved.waba().getId());
+        } catch (Exception ex) {
+            log.warn("Phone sync failed (retry via /{}/sync). Error: {}",
+                    saved.waba().getId(), ex.getMessage());
+        }
+
+        // ── Step H: Register phone number with Meta (best-effort) ──
         if (resolvedPhoneNumberId != null) {
             boolean registered = phoneRegistrationService.registerPhoneNumber(
                     resolvedPhoneNumberId, tokenResult.accessToken());
@@ -134,13 +164,13 @@ public class EmbeddedSignupService {
             }
         }
 
-        // Step I: SMB sync for coexistence flow (best-effort)
+        // ── Step I: SMB sync for coexistence flow (best-effort) ──
         if (request.isCoexistenceFlow() && resolvedPhoneNumberId != null) {
             log.info("Coexistence flow — initiating SMB sync for phoneNumberId={}", resolvedPhoneNumberId);
             phoneRegistrationService.initiateSmbSync(resolvedPhoneNumberId, tokenResult.accessToken());
         }
 
-        // Step J: Phase 2 — auto-provision permanent system user token (non-blocking)
+        // ── Step J: Phase 2 — system user provisioning (best-effort) ──
         boolean phase2Ok = systemUserProvisioningService.tryProvisionAfterSignup(request.getOrganizationId());
         if (phase2Ok) {
             log.info("Phase 2 complete: permanent token for orgId={}", request.getOrganizationId());
@@ -149,13 +179,23 @@ public class EmbeddedSignupService {
                     request.getOrganizationId(), request.getOrganizationId());
         }
 
-        return result;
+        // ── Build response ──
+        return EmbeddedSignupResponse.builder()
+                .wabaAccountId(saved.waba().getId())
+                .wabaId(wabaId)
+                .status(saved.waba().getStatus().getValue())
+                .businessManagerId(businessManagerId)
+                .tokenExpiresIn(tokenResult.expiresIn())
+                .longLivedToken(tokenResult.isLongLived())
+                .phoneNumbers(phoneNumbers)
+                .phoneNumberCount(phoneNumbers.size())
+                .webhookSubscribed(webhookOk)
+                .summary(buildSummary(phoneNumbers.size(), wabaId, webhookOk))
+                .build();
     }
 
     // ════════════════════════════════════════════════════════════
     // STEP A: Token Exchange
-    // FIX: Meta returns FLAT JSON — { "access_token": "...", "token_type": "bearer" }
-    //      This is NOT wrapped in a data field. Read from extras.
     // ════════════════════════════════════════════════════════════
 
     private String exchangeCodeForToken(String code) {
@@ -168,8 +208,6 @@ public class EmbeddedSignupService {
                             ". Code may be expired or already used.");
         }
 
-        // FLAT response: access_token is at top level → lands in extras via @JsonAnySetter
-        // NOT in data wrapper. response.getData() would return null here.
         Object token = response.getFlatValue("access_token");
         if (token == null || token.toString().isBlank()) {
             log.error("Token exchange response extras: {}", response.getExtras());
@@ -183,7 +221,6 @@ public class EmbeddedSignupService {
 
     // ════════════════════════════════════════════════════════════
     // STEP B: Token Extension
-    // FIX: Same flat response as token exchange — access_token/expires_in at top level
     // ════════════════════════════════════════════════════════════
 
     private TokenResult extendToLongLivedToken(String shortLivedToken) {
@@ -197,8 +234,6 @@ public class EmbeddedSignupService {
                                 "Ensure your Meta App is in Live mode at developers.facebook.com.");
             }
 
-            // FLAT response: access_token and expires_in are at top level → in extras
-            // getFlatValue() checks extras first, then dataAsMap fallback
             Object tokenObj = response.getFlatValue("access_token");
             Object expiresObj = response.getFlatValue("expires_in");
 
@@ -232,8 +267,6 @@ public class EmbeddedSignupService {
 
     // ════════════════════════════════════════════════════════════
     // STEP C: OAuth Scope Verification
-    // FIX: /me/permissions returns { "data": [ { "permission": "...", "status": "granted" } ] }
-    //      Use getDataAsList() — NOT getData().get("data") double-unwrap
     // ════════════════════════════════════════════════════════════
 
     private void verifyOAuthScopes(String accessToken) {
@@ -247,8 +280,6 @@ public class EmbeddedSignupService {
                 return;
             }
 
-            // /me/permissions returns { "data": [ { "permission": "...", "status": "granted" } ] }
-            // data is an array → use getDataAsList()
             List<Map<String, Object>> permissions = response.getDataAsList();
 
             if (permissions == null) {
@@ -308,11 +339,6 @@ public class EmbeddedSignupService {
         log.info("WABA ownership confirmed: wabaId={}", wabaId);
     }
 
-    /**
-     * Auto-discover WABA from business accounts.
-     * FIX: /me/businesses returns { "data": [ { "id": "...", "owned_whatsapp_business_accounts": {...} } ] }
-     * Use getDataAsList() — the businesses array is directly in data.
-     */
     @SuppressWarnings("unchecked")
     private String discoverWabaId(String accessToken) {
         var response = metaRetry.execute("discoverWabaId",
@@ -324,7 +350,6 @@ public class EmbeddedSignupService {
                             ". Provide wabaId explicitly.");
         }
 
-        // /me/businesses returns { "data": [ {...business...} ] }
         List<Map<String, Object>> businesses = response.getDataAsList();
 
         if (businesses == null || businesses.isEmpty()) {
@@ -356,7 +381,6 @@ public class EmbeddedSignupService {
 
     // ════════════════════════════════════════════════════════════
     // STEP E: Business Manager ID Resolution
-    // FIX: WABA details returns object in data → use getDataAsMap()
     // ════════════════════════════════════════════════════════════
 
     private String resolveBusinessManagerId(EmbeddedSignupCallbackRequest request,
@@ -369,8 +393,6 @@ public class EmbeddedSignupService {
             var details = metaRetry.executeWithContext("getWabaDetails", wabaId,
                     () -> metaApiClient.getWabaDetails(wabaId, accessToken));
 
-            // WABA details: { "id": "...", "business_id": "...", "name": "..." }
-            // This is a flat response — fields land in extras
             if (details.isOk()) {
                 Object bizId = details.getFlatValue("business_id");
                 if (bizId != null && !String.valueOf(bizId).isBlank()) {
@@ -413,12 +435,47 @@ public class EmbeddedSignupService {
     // ════════════════════════════════════════════════════════════
     // STEP G: DB TRANSACTION — pure writes only, no external I/O
     // ════════════════════════════════════════════════════════════
+    //
+    // ═══ TRANSACTION BOUNDARY FIX ═══
+    //
+    // BEFORE (BROKEN):
+    //   @Transactional saveOnboardingData() did:
+    //     1. DB duplicate check           ← OK in TX
+    //     2. DB save OAuth account         ← OK in TX
+    //     3. DB save WABA                  ← OK in TX
+    //     4. subscribeAndVerifyWebhook()   ← 10-30s HTTP! Holds DB connection!
+    //     5. syncPhoneNumbersFromMeta()    ← 5-15s HTTP! Holds DB connection!
+    //
+    //   With Hikari max-pool-size=10, just 10 concurrent signups exhaust
+    //   the pool. Signup #11 blocks 30s on getConnection() then fails.
+    //
+    // AFTER (FIXED):
+    //   @Transactional persistOnboardingData() does ONLY:
+    //     1. DB duplicate check
+    //     2. DB save OAuth account
+    //     3. DB save WABA
+    //   → Commits, releases DB connection (< 50ms total)
+    //
+    //   processSignupCallback() (NOT transactional) then does:
+    //     4. subscribeAndVerifyWebhook()   ← no DB connection held
+    //     5. syncPhoneNumbersFromMeta()    ← no DB connection held
+    //
+    // ════════════════════════════════════════════════════════════
 
+    /**
+     * Persist onboarding data in a tight transaction — PURE DB WRITES ONLY.
+     *
+     * No external HTTP calls. No Meta API calls. Just duplicate checks + inserts.
+     * Returns the persisted entities so the caller can use them for external calls
+     * AFTER the transaction commits and the DB connection is released.
+     */
     @Transactional
-    public EmbeddedSignupResponse saveOnboardingData(EmbeddedSignupCallbackRequest request,
-                                                     TokenResult tokenResult,
-                                                     String wabaId,
-                                                     String businessManagerId) {
+    public PersistedOnboardingData persistOnboardingData(
+            EmbeddedSignupCallbackRequest request,
+            TokenResult tokenResult,
+            String wabaId,
+            String businessManagerId) {
+
         // Global uniqueness check — is this WABA already connected to ANY org?
         if (wabaAccountRepository.existsByWabaId(wabaId)) {
             if (wabaAccountRepository.existsByOrganizationIdAndWabaId(request.getOrganizationId(), wabaId)) {
@@ -450,35 +507,20 @@ public class EmbeddedSignupService {
                     "This WABA was just connected by another request. Refresh and check your WABA list.");
         }
 
-        // Best-effort: webhook subscribe + health check
-        boolean webhookOk = subscribeAndVerifyWebhook(wabaId, tokenResult.accessToken());
+        log.info("Onboarding data persisted: wabaAccountId={}, orgId={}",
+                waba.getId(), request.getOrganizationId());
 
-        // Best-effort: phone number sync from Meta
-        List<PhoneNumberResponse> phoneNumbers = new ArrayList<>();
-        try {
-            phoneNumberService.syncPhoneNumbersFromMeta(waba, tokenResult.accessToken());
-            phoneNumbers = phoneNumberService.getPhoneNumbersByWaba(waba.getId());
-        } catch (Exception ex) {
-            log.warn("Phone sync failed (retry via /{}/sync). Error: {}", waba.getId(), ex.getMessage());
-        }
-
-        return EmbeddedSignupResponse.builder()
-                .wabaAccountId(waba.getId())
-                .wabaId(wabaId)
-                .status(waba.getStatus().getValue())
-                .businessManagerId(businessManagerId)
-                .tokenExpiresIn(tokenResult.expiresIn())
-                .longLivedToken(tokenResult.isLongLived())
-                .phoneNumbers(phoneNumbers)
-                .phoneNumberCount(phoneNumbers.size())
-                .webhookSubscribed(webhookOk)
-                .summary(buildSummary(phoneNumbers.size(), wabaId, webhookOk))
-                .build();
+        return new PersistedOnboardingData(waba, oauthAccount);
     }
 
+    /**
+     * Immutable record holding the entities created during the transactional persist step.
+     * Passed to the non-transactional caller for use in external API calls.
+     */
+    record PersistedOnboardingData(WabaAccount waba, MetaOAuthAccount oauthAccount) {}
+
     // ════════════════════════════════════════════════════════════
-    // WEBHOOK: Subscribe + Health Check
-    // FIX: getSubscribedApps returns { "data": [...] } → use getDataAsList()
+    // WEBHOOK: Subscribe + Health Check (called OUTSIDE transaction)
     // ════════════════════════════════════════════════════════════
 
     private boolean subscribeAndVerifyWebhook(String wabaId, String accessToken) {
@@ -510,15 +552,10 @@ public class EmbeddedSignupService {
         }
     }
 
-    /**
-     * FIX: subscribed_apps returns { "data": [ { "id": "appId", ... } ] }
-     * Use getDataAsList() directly.
-     */
     @SuppressWarnings("unchecked")
     private boolean isOurAppSubscribed(MetaApiResponse response) {
         if (!response.isOk()) return false;
         try {
-            // { "data": [ { "id": "appId", ... } ] }
             List<Map<String, Object>> apps = response.getDataAsList();
             if (apps == null) return false;
 
