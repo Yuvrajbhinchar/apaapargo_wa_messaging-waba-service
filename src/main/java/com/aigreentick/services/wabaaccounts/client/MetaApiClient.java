@@ -246,6 +246,44 @@ public class MetaApiClient {
     }
 
     // ════════════════════════════════════════════════════════════
+    // PHASE 1.5b — Coexistence: SMB App Data Sync
+    // ════════════════════════════════════════════════════════════
+
+    /**
+     * Initiate contacts synchronization for coexistence onboarding.
+     * POST /{phoneNumberId}/smb_app_data
+     * Body: { messaging_product: "whatsapp", sync_type: "smb_app_state_sync" }
+     *
+     * Required when migrating an existing WhatsApp number to Cloud API.
+     * Without this, the customer won't see their existing contacts.
+     */
+    public MetaApiResponse syncSmbAppState(String phoneNumberId, String accessToken) {
+        log.info("Initiating SMB app state sync: phoneNumberId={}", phoneNumberId);
+        MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
+        body.add("messaging_product", "whatsapp");
+        body.add("sync_type", "smb_app_state_sync");
+        return post(config.getVersionedBaseUrl() + "/" + phoneNumberId + "/smb_app_data",
+                body, accessToken);
+    }
+
+    /**
+     * Initiate message history synchronization for coexistence onboarding.
+     * POST /{phoneNumberId}/smb_app_data
+     * Body: { messaging_product: "whatsapp", sync_type: "history" }
+     *
+     * Required when migrating an existing WhatsApp number to Cloud API.
+     * Without this, the customer won't see their previous chat history.
+     */
+    public MetaApiResponse syncSmbHistory(String phoneNumberId, String accessToken) {
+        log.info("Initiating SMB history sync: phoneNumberId={}", phoneNumberId);
+        MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
+        body.add("messaging_product", "whatsapp");
+        body.add("sync_type", "history");
+        return post(config.getVersionedBaseUrl() + "/" + phoneNumberId + "/smb_app_data",
+                body, accessToken);
+    }
+
+    // ════════════════════════════════════════════════════════════
     // PHASE 2 — System User Provisioning
     // ════════════════════════════════════════════════════════════
 

@@ -31,22 +31,27 @@ import java.util.Map;
 /**
  * Handles the complete Meta WhatsApp Embedded Signup flow.
  *
- * ─── v3 Fixes (Blocker-level) ────────────────────────────────────────────
- *   FIX 1: Race condition — DB constraint + friendly 409 catch
- *   FIX 2: OAuth domain model — one token per org (not per BM)
- *   FIX 3: Meta API outside @Transactional — no long-held DB connections
+ * ─── v5 Fixes (PHP parity — 3 missing Meta onboarding steps) ────────────
+ *   FIX 6: Phone registration   — POST /{phoneNumberId}/register after sync
+ *   FIX 7: Coexistence flow     — Handle phoneNumberId=NA / APP_ONBOARDING
+ *   FIX 8: SMB data sync        — Contact + history sync for coexistence
  *
  * ─── v4 Fixes (Senior review gaps) ──────────────────────────────────────
- *   GAP 1: WABA ownership verified — user must own the WABA they sent
- *   GAP 2: OAuth scopes verified — all required permissions must be granted
- *   GAP 3: Webhook health checked — subscription confirmed, not just "success:true"
- *   GAP 4: Tokens encrypted at rest — AES-256-GCM before DB write
- *   GAP 5: Retry layer — transient Meta errors retried with exponential backoff
+ *   GAP 1: WABA ownership verified
+ *   GAP 2: OAuth scopes verified
+ *   GAP 3: Webhook health checked
+ *   GAP 4: Tokens encrypted at rest
+ *   GAP 5: Retry layer
  *
- * ─── Transaction design (unchanged) ─────────────────────────────────────
+ * ─── v3 Fixes (Blocker-level) ────────────────────────────────────────────
+ *   FIX 1: Race condition — DB constraint + friendly 409 catch
+ *   FIX 2: OAuth domain model — one token per org
+ *   FIX 3: Meta API outside @Transactional
+ *
+ * ─── Transaction design ─────────────────────────────────────────────────
  *   BEFORE TX  → All Meta API calls (token exchange, extension, verification)
  *   INSIDE TX  → Pure DB writes only — fast, no external I/O
- *   AFTER SAVE → Best-effort side effects (webhook + health check, phone sync)
+ *   AFTER SAVE → Best-effort side effects (webhook, phone sync, registration, SMB sync)
  */
 @Service
 @RequiredArgsConstructor
@@ -59,6 +64,7 @@ public class EmbeddedSignupService {
     private final MetaOAuthAccountRepository oauthAccountRepository;
     private final WabaAccountRepository wabaAccountRepository;
     private final PhoneNumberService phoneNumberService;
+    private final PhoneRegistrationService phoneRegistrationService;  // NEW
     private final SystemUserProvisioningService systemUserProvisioningService;
     private final TokenEncryptionService tokenEncryptionService;
 
@@ -77,11 +83,11 @@ public class EmbeddedSignupService {
     public SignupConfigResponse getSignupConfig() {
         return SignupConfigResponse.builder()
                 .metaAppId(metaApiConfig.getAppId())
-                .apiVersion(metaApiConfig.getApiVersion())              // Fix: alias added to MetaApiConfig
+                .apiVersion(metaApiConfig.getApiVersion())
                 .scopes(REQUIRED_SCOPES_CSV)
                 .extrasJson(buildExtrasJson())
                 .callbackEndpoint("/api/v1/embedded-signup/callback")
-                .configId(metaApiConfig.getEmbeddedSignupConfigId())   // Fix: field added to MetaApiConfig
+                .configId(metaApiConfig.getEmbeddedSignupConfigId())
                 .build();
     }
 
@@ -90,10 +96,10 @@ public class EmbeddedSignupService {
     // ════════════════════════════════════════════════════════════
 
     public EmbeddedSignupResponse processSignupCallback(EmbeddedSignupCallbackRequest request) {
-        log.info("Embedded signup started: orgId={}", request.getOrganizationId());
+        log.info("Embedded signup started: orgId={}, coexistence={}",
+                request.getOrganizationId(), request.isCoexistenceFlow());
 
         // Step A: Exchange OAuth code for short-lived token
-        // Single-use code — must never be retried if exchange succeeds
         String shortLivedToken = exchangeCodeForToken(request.getCode());
 
         // Step B: Extend to long-lived user token (~60 days)
@@ -101,23 +107,49 @@ public class EmbeddedSignupService {
         log.info("Long-lived token obtained. Expires ~{} days", tokenResult.expiresIn() / 86400);
 
         // Step C (GAP 2): Verify all required OAuth scopes were granted
-        // User can deselect scopes during the Meta OAuth dialog.
-        // Missing scope now = silent failure later. Fail early with a clear message.
         verifyOAuthScopes(tokenResult.accessToken());
 
         // Step D (GAP 1): Resolve WABA ID and verify ownership
-        // If frontend sent a wabaId, verify the token actually owns it.
-        // Prevents cross-tenant attack where malicious client sends another org's wabaId.
         String wabaId = resolveAndVerifyWabaOwnership(request, tokenResult.accessToken());
 
-        // Step E: Resolve Business Manager ID (Meta API — stays outside TX)
+        // Step E: Resolve Business Manager ID
         String businessManagerId = resolveBusinessManagerId(request, wabaId, tokenResult.accessToken());
 
+        // ── FIX 7: Resolve phone number ID (coexistence flow) ──────────
+        // If frontend sent phoneNumberId=NA or signupType=APP_ONBOARDING,
+        // we need to auto-discover the latest phone number from the WABA.
+        String resolvedPhoneNumberId = resolvePhoneNumberId(request, wabaId, tokenResult.accessToken());
+
         // Step F: All DB writes in one tight transaction
-        EmbeddedSignupResponse result = saveOnboardingData(request, tokenResult, wabaId, businessManagerId);
+        EmbeddedSignupResponse result = saveOnboardingData(
+                request, tokenResult, wabaId, businessManagerId);
+
+        // ── FIX 6: Register phone number with Meta ─────────────────────
+        // This MUST happen after WABA is saved (we need the token).
+        // PHP does: POST /{phone_number_id}/register { messaging_product: "whatsapp", pin: "123456" }
+        // Without this, the phone remains inactive and can't send/receive messages.
+        if (resolvedPhoneNumberId != null) {
+            boolean registered = phoneRegistrationService.registerPhoneNumber(
+                    resolvedPhoneNumberId, tokenResult.accessToken());
+            if (registered) {
+                log.info("Phone registered during onboarding: phoneNumberId={}", resolvedPhoneNumberId);
+            } else {
+                log.warn("Phone registration failed during onboarding (can retry via /phone-numbers/register): " +
+                        "phoneNumberId={}", resolvedPhoneNumberId);
+            }
+        }
+
+        // ── FIX 8: SMB sync for coexistence flow ──────────────────────
+        // PHP does two calls for APP_ONBOARDING:
+        //   POST /{phoneId}/smb_app_data  sync_type=smb_app_state_sync  (contacts)
+        //   POST /{phoneId}/smb_app_data  sync_type=history             (chat history)
+        // Without these, migrated customers won't see their contacts or past chats.
+        if (request.isCoexistenceFlow() && resolvedPhoneNumberId != null) {
+            log.info("Coexistence flow — initiating SMB sync for phoneNumberId={}", resolvedPhoneNumberId);
+            phoneRegistrationService.initiateSmbSync(resolvedPhoneNumberId, tokenResult.accessToken());
+        }
 
         // Step G: Phase 2 — auto-provision permanent system user token (non-blocking)
-        // Failure here does NOT roll back Phase 1.
         boolean phase2Ok = systemUserProvisioningService.tryProvisionAfterSignup(request.getOrganizationId());
         if (phase2Ok) {
             log.info("Phase 2 complete: permanent token for orgId={}", request.getOrganizationId());
@@ -127,6 +159,50 @@ public class EmbeddedSignupService {
         }
 
         return result;
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // FIX 7: Phone Number Resolution (Coexistence)
+    // ════════════════════════════════════════════════════════════
+
+    /**
+     * Resolve the phone number ID to register.
+     *
+     * Two cases:
+     *   1. NORMAL FLOW: Frontend provides a real phoneNumberId → use it directly
+     *   2. COEXISTENCE FLOW: phoneNumberId is "NA" or null →
+     *      auto-discover from GET /{wabaId}/phone_numbers, pick the latest
+     *
+     * Equivalent of PHP:
+     *   if ($whatsapp_no_id === 'NA') {
+     *       $phoneResponse = GET /{waba_id}/phone_numbers;
+     *       $latestPhone = end($numbers);
+     *       $phoneNumberId = $latestPhone['id'];
+     *   }
+     */
+    private String resolvePhoneNumberId(EmbeddedSignupCallbackRequest request,
+                                        String wabaId,
+                                        String accessToken) {
+        // Normal flow — frontend provided a valid phone number ID
+        if (request.hasPhoneNumberId()) {
+            log.info("Using phone number ID from frontend: {}", request.getPhoneNumberId());
+            return request.getPhoneNumberId();
+        }
+
+        // Coexistence flow — auto-discover from WABA
+        log.info("Phone number ID not provided (coexistence flow). Auto-discovering from WABA: {}", wabaId);
+        PhoneRegistrationService.DiscoveredPhone discovered =
+                phoneRegistrationService.discoverLatestPhoneNumber(wabaId, accessToken);
+
+        if (discovered == null) {
+            log.warn("No phone numbers found for WABA {}. " +
+                    "Phone registration will be skipped — user can add manually later.", wabaId);
+            return null;
+        }
+
+        log.info("Auto-discovered phone: id={}, display={}",
+                discovered.phoneNumberId(), discovered.displayPhoneNumber());
+        return discovered.phoneNumberId();
     }
 
     // ════════════════════════════════════════════════════════════
@@ -143,13 +219,14 @@ public class EmbeddedSignupService {
             if (wabaAccountRepository.existsByOrganizationIdAndWabaId(request.getOrganizationId(), wabaId)) {
                 throw DuplicateWabaException.forOrganization(request.getOrganizationId(), wabaId);
             }
-            log.error("Cross-tenant WABA conflict: wabaId={} requested by orgId={}", wabaId, request.getOrganizationId());
+            log.error("Cross-tenant WABA conflict: wabaId={} requested by orgId={}",
+                    wabaId, request.getOrganizationId());
             throw new DuplicateWabaException(
                     "This WhatsApp Business Account is already connected to another account. " +
                             "Contact support if you believe this is an error.");
         }
 
-        // GAP 4: Encrypt token before persisting — never store plaintext
+        // GAP 4: Encrypt token before persisting
         String encryptedToken = tokenEncryptionService.encrypt(tokenResult.accessToken());
         MetaOAuthAccount oauthAccount = saveOAuthAccount(
                 request.getOrganizationId(), encryptedToken, tokenResult.expiresIn());
@@ -171,10 +248,9 @@ public class EmbeddedSignupService {
         }
 
         // Best-effort: webhook subscribe + health check (GAP 3)
-        // Use raw (decrypted) token for Meta calls — but we're post-save here, so use original
         boolean webhookOk = subscribeAndVerifyWebhook(wabaId, tokenResult.accessToken());
 
-        // Best-effort: phone number sync
+        // Best-effort: phone number sync from Meta
         List<PhoneNumberResponse> phoneNumbers = new ArrayList<>();
         try {
             phoneNumberService.syncPhoneNumbersFromMeta(waba, tokenResult.accessToken());
@@ -201,15 +277,6 @@ public class EmbeddedSignupService {
     // GAP 2: OAuth scope verification
     // ════════════════════════════════════════════════════════════
 
-    /**
-     * Verify all required OAuth scopes are present in the user's token.
-     *
-     * Users can uncheck scopes during the Meta OAuth dialog. A token without
-     * whatsapp_business_messaging will succeed onboarding but fail during
-     * the first message send — confusing and painful to debug.
-     *
-     * Fail here with a clear error so the user can reconnect immediately.
-     */
     @SuppressWarnings("unchecked")
     private void verifyOAuthScopes(String accessToken) {
         try {
@@ -218,7 +285,7 @@ public class EmbeddedSignupService {
 
             if (!response.isOk() || response.getData() == null) {
                 log.warn("Could not reach /me/permissions — proceeding without scope check");
-                return; // Non-fatal: don't block signup if Meta's permission endpoint is down
+                return;
             }
 
             Object dataObj = response.getData().get("data");
@@ -256,13 +323,6 @@ public class EmbeddedSignupService {
     // GAP 1: WABA ownership verification
     // ════════════════════════════════════════════════════════════
 
-    /**
-     * Resolve WABA ID and verify the user's token actually owns it.
-     *
-     * A malicious client could send someone else's WABA ID in the request.
-     * We verify by calling GET /{wabaId} with the user's token.
-     * If Meta returns a permission error → token doesn't own the WABA → reject.
-     */
     private String resolveAndVerifyWabaOwnership(EmbeddedSignupCallbackRequest request,
                                                  String accessToken) {
         if (request.getWabaId() != null && !request.getWabaId().isBlank()) {
@@ -319,17 +379,7 @@ public class EmbeddedSignupService {
     // GAP 3: Webhook subscribe + health verification
     // ════════════════════════════════════════════════════════════
 
-    /**
-     * Subscribe to WABA webhook AND verify the subscription is actually active.
-     *
-     * subscribeWabaWebhook() returning success:true only means the API call worked.
-     * It does NOT mean the webhook is receiving events.
-     *
-     * Verify by calling GET /{wabaId}/subscribed_apps and confirming our app is listed.
-     * This is what Meta reviewers check for.
-     */
     private boolean subscribeAndVerifyWebhook(String wabaId, String accessToken) {
-        // Step 1: Subscribe
         try {
             var subResult = metaRetry.executeWithContext("subscribeWebhook", wabaId,
                     () -> metaApiClient.subscribeWabaToWebhook(wabaId, accessToken));
@@ -342,7 +392,6 @@ public class EmbeddedSignupService {
             return false;
         }
 
-        // Step 2: Health check — confirm our app is in the subscribed list
         try {
             var check = metaRetry.executeWithContext("verifyWebhook", wabaId,
                     () -> metaApiClient.getSubscribedApps(wabaId, accessToken));
@@ -356,7 +405,7 @@ public class EmbeddedSignupService {
             return active;
         } catch (Exception ex) {
             log.warn("Webhook health check failed (subscription may still be active): wabaId={}", wabaId);
-            return true; // Subscribe succeeded — optimistically assume it's working
+            return true;
         }
     }
 

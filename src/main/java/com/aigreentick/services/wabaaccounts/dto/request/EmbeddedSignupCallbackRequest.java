@@ -8,12 +8,17 @@ import lombok.*;
 /**
  * Request body for Meta Embedded Signup callback.
  *
+ * Supports TWO flows:
+ *   1. NORMAL SIGNUP: phoneNumberId is a real Meta phone number ID
+ *   2. COEXISTENCE / APP_ONBOARDING: phoneNumberId is "NA" or null,
+ *      signupType is "APP_ONBOARDING" — phone numbers are auto-discovered from WABA
+ *
  * Flow:
  * 1. Frontend shows "Connect with WhatsApp Business" (Facebook Login SDK)
  * 2. User completes Meta's guided signup flow in popup
- * 3. Meta SDK calls your frontend callback with { code, wabaId, ... }
+ * 3. Meta SDK calls your frontend callback with { code, wabaId, phoneNumberId, ... }
  * 4. Frontend sends THIS request to our backend
- * 5. Backend exchanges code → access token, creates WABA, syncs phone numbers
+ * 5. Backend exchanges code → access token, creates WABA, registers phone, syncs numbers
  */
 @Getter
 @Setter
@@ -42,6 +47,20 @@ public class EmbeddedSignupCallbackRequest {
     private String wabaId;
 
     @Schema(
+            description = "Phone number ID returned by Meta FB SDK. " +
+                    "'NA' or null for coexistence/APP_ONBOARDING flow — backend auto-discovers.",
+            example = "109876543210987"
+    )
+    private String phoneNumberId;
+
+    @Schema(
+            description = "Signup type from Meta SDK. 'APP_ONBOARDING' triggers coexistence flow " +
+                    "with contact/history sync. Null or blank = normal embedded signup.",
+            example = "APP_ONBOARDING"
+    )
+    private String signupType;
+
+    @Schema(
             description = "Meta Business Manager ID (if returned by SDK)",
             example = "987654321098765"
     )
@@ -52,4 +71,29 @@ public class EmbeddedSignupCallbackRequest {
             example = "Asia/Kolkata"
     )
     private String timezone;
+
+    // ════════════════════════════════════════════════════════════
+    // Helper methods
+    // ════════════════════════════════════════════════════════════
+
+    /**
+     * True if this is a coexistence / APP_ONBOARDING flow.
+     * In this flow, the phone number ID is not provided by the SDK —
+     * we must auto-discover it from the WABA's phone numbers list.
+     */
+    public boolean isCoexistenceFlow() {
+        return "APP_ONBOARDING".equalsIgnoreCase(signupType)
+                || phoneNumberId == null
+                || "NA".equalsIgnoreCase(phoneNumberId)
+                || phoneNumberId.isBlank();
+    }
+
+    /**
+     * True if a valid phone number ID was provided by the frontend.
+     */
+    public boolean hasPhoneNumberId() {
+        return phoneNumberId != null
+                && !"NA".equalsIgnoreCase(phoneNumberId)
+                && !phoneNumberId.isBlank();
+    }
 }
