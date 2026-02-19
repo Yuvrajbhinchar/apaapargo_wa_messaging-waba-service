@@ -19,7 +19,7 @@ import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 
 /**
- * WebClient configuration for Meta Graph API calls
+ * WebClient configuration for Meta Graph API calls.
  * Direct Meta Cloud API integration (no BSP)
  */
 @Configuration
@@ -29,11 +29,11 @@ public class WebClientConfig {
     @Value("${meta.graph-api-base-url}")
     private String graphApiBaseUrl;
 
-    @Value("${meta.api-version}")
+    @Value("${meta.graph-api-version}")   // FIX: was ${meta.api-version}
     private String apiVersion;
 
     /**
-     * WebClient pre-configured for Meta Graph API
+     * WebClient pre-configured for Meta Graph API.
      * Base URL: https://graph.facebook.com/v21.0
      *
      * Timeouts:
@@ -61,22 +61,16 @@ public class WebClientConfig {
                 .build();
     }
 
-    /**
-     * Log outgoing Meta API requests (URL + method only, no auth headers)
-     */
     private ExchangeFilterFunction logRequest() {
         return ExchangeFilterFunction.ofRequestProcessor(clientRequest -> {
-            log.debug("→ Meta API Request: {} {}", clientRequest.method(), clientRequest.url());
+            log.debug("-> Meta API Request: {} {}", clientRequest.method(), clientRequest.url());
             return Mono.just(clientRequest);
         });
     }
 
-    /**
-     * Log incoming Meta API response status
-     */
     private ExchangeFilterFunction logResponse() {
         return ExchangeFilterFunction.ofResponseProcessor(clientResponse -> {
-            log.debug("← Meta API Response: {}", clientResponse.statusCode());
+            log.debug("<- Meta API Response: {}", clientResponse.statusCode());
             return Mono.just(clientResponse);
         });
     }

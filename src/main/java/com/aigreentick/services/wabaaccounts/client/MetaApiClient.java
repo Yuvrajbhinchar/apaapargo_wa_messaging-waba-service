@@ -3,22 +3,24 @@ package com.aigreentick.services.wabaaccounts.client;
 import com.aigreentick.services.wabaaccounts.config.MetaApiConfig;
 import com.aigreentick.services.wabaaccounts.dto.response.MetaApiResponse;
 import com.aigreentick.services.wabaaccounts.exception.MetaApiException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.*;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
-import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.HttpServerErrorException;
-import org.springframework.web.client.RestTemplate;
+import org.springframework.web.reactive.function.BodyInserters;
+import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import java.util.Map;
 
 /**
  * Meta Graph API Client — all calls to Meta's Graph API in one place.
+ *
+ * Uses WebClient (non-blocking) instead of RestTemplate.
+ * Calls are made synchronously via .block() so service layer stays unchanged.
  *
  * Design rules:
  *   1. Never throw checked exceptions — wrap in MetaApiException
@@ -49,13 +51,17 @@ import java.util.Map;
  *   - debugToken()                  GET  /debug_token
  */
 @Component
-@RequiredArgsConstructor
 @Slf4j
 public class MetaApiClient {
 
     private final MetaApiConfig config;
-    private final RestTemplate restTemplate;
-    private final ObjectMapper objectMapper;
+    private final WebClient webClient;
+
+    public MetaApiClient(MetaApiConfig config,
+                         @Qualifier("metaWebClient") WebClient webClient) {
+        this.config = config;
+        this.webClient = webClient;
+    }
 
     // ════════════════════════════════════════════════════════════
     // PHASE 1 — Token + WABA discovery
@@ -195,22 +201,11 @@ public class MetaApiClient {
 
     // ════════════════════════════════════════════════════════════
     // PHASE 1.5 — Phone Number Registration & Verification
-    // These methods were missing — caused PhoneNumberService to fail to compile
     // ════════════════════════════════════════════════════════════
 
     /**
      * Register a phone number with Meta WhatsApp Cloud API.
-     *
      * POST /{phoneNumberId}/register
-     * Body: messaging_product=whatsapp&pin={6-digit-2fa-pin}
-     *
-     * Prerequisites:
-     *   - Phone number must exist in the WABA
-     *   - User must have already set a 2-step verification PIN via WhatsApp
-     *   - WABA must be in ACTIVE status
-     *
-     * On success: phone number transitions to CONNECTED state in Meta's system.
-     * Returns: { "success": true }
      */
     public MetaApiResponse registerPhoneNumber(String phoneNumberId,
                                                String accessToken,
@@ -224,14 +219,7 @@ public class MetaApiClient {
 
     /**
      * Request a verification code for a phone number via SMS or Voice call.
-     *
      * POST /{phoneNumberId}/request_code
-     * Body: code_method={SMS|VOICE}&language={locale}
-     *
-     * Meta sends an OTP to the phone number.
-     * The customer then provides that OTP to be passed into verifyCode().
-     *
-     * Returns: { "success": true }
      */
     public MetaApiResponse requestVerificationCode(String phoneNumberId,
                                                    String accessToken,
@@ -239,19 +227,14 @@ public class MetaApiClient {
                                                    String locale) {
         log.info("Requesting verification code: phoneNumberId={}, method={}", phoneNumberId, method);
         MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
-        body.add("code_method", method);   // "SMS" or "VOICE"
-        body.add("language",   locale);    // e.g. "en_US"
+        body.add("code_method", method);
+        body.add("language",   locale);
         return post(config.getVersionedBaseUrl() + "/" + phoneNumberId + "/request_code", body, accessToken);
     }
 
     /**
      * Verify a phone number with the OTP code received.
-     *
      * POST /{phoneNumberId}/verify_code
-     * Body: code={6-digit-otp}
-     *
-     * On success: phone number is verified in Meta's system.
-     * Returns: { "success": true }
      */
     public MetaApiResponse verifyCode(String phoneNumberId,
                                       String accessToken,
@@ -308,7 +291,7 @@ public class MetaApiClient {
                                                    String accessToken) {
         log.info("Generating permanent token for system user: {}", systemUserId);
         MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
-        body.add("business_app",   appId);
+        body.add("business_app",    appId);
         body.add("appsecret_proof", appSecretProof);
         body.add("scope",           scope);
         body.add("access_token",    accessToken);
@@ -321,26 +304,10 @@ public class MetaApiClient {
 
     /**
      * Inspect a token's validity, expiry, and granted scopes.
-     *
      * GET /debug_token?input_token={token}&access_token={appId}|{appSecret}
-     *
-     * The access_token param uses app access token format (appId|appSecret).
-     * This does NOT require a user token — uses your app credentials directly.
-     *
-     * Response includes:
-     *   - is_valid: false if token is revoked, expired, or invalid
-     *   - expires_at: Unix timestamp of expiry (0 = permanent)
-     *   - scopes: list of granted permissions
-     *   - user_id: Meta user ID who authorized the token
-     *
-     * Use this in your token health scheduler to detect:
-     *   - Revoked tokens (user logged out of Meta, or revoked app access)
-     *   - Expired user tokens (60-day window missed)
-     *   - Missing scopes (user re-authorized with fewer permissions)
      */
     public MetaApiResponse debugToken(String tokenToInspect) {
         log.debug("Inspecting token validity via /debug_token");
-        // App access token = {app_id}|{app_secret}
         String appAccessToken = config.getAppId() + "|" + config.getAppSecret();
         String url = UriComponentsBuilder
                 .fromUriString(config.getVersionedBaseUrl() + "/debug_token")
@@ -351,18 +318,22 @@ public class MetaApiClient {
     }
 
     // ════════════════════════════════════════════════════════════
-    // PRIVATE — HTTP helpers
+    // PRIVATE — HTTP helpers (WebClient, called synchronously via .block())
     // ════════════════════════════════════════════════════════════
 
     private MetaApiResponse get(String url) {
         try {
-            ResponseEntity<MetaApiResponse> response =
-                    restTemplate.getForEntity(url, MetaApiResponse.class);
-            return handleResponse(response);
-        } catch (HttpClientErrorException ex) {
+            MetaApiResponse response = webClient.get()
+                    .uri(url)
+                    .retrieve()
+                    .bodyToMono(MetaApiResponse.class)
+                    .block();
+
+            return response != null ? response : emptySuccess();
+
+        } catch (WebClientResponseException ex) {
+            // 4xx / 5xx from Meta
             return parseErrorResponse(ex);
-        } catch (HttpServerErrorException ex) {
-            throw new MetaApiException("Meta API server error: " + ex.getMessage(), ex);
         } catch (Exception ex) {
             throw new MetaApiException("Failed to call Meta API: " + ex.getMessage(), ex);
         }
@@ -372,48 +343,59 @@ public class MetaApiClient {
                                  MultiValueMap<String, String> formBody,
                                  String bearerToken) {
         try {
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
-            if (bearerToken != null) {
-                headers.setBearerAuth(bearerToken);
-            }
-            HttpEntity<MultiValueMap<String, String>> entity = new HttpEntity<>(formBody, headers);
+            var requestSpec = webClient.post()
+                    .uri(url)
+                    .contentType(MediaType.APPLICATION_FORM_URLENCODED);
 
-            ResponseEntity<MetaApiResponse> response =
-                    restTemplate.postForEntity(url, entity, MetaApiResponse.class);
-            return handleResponse(response);
-        } catch (HttpClientErrorException ex) {
+            if (bearerToken != null) {
+                requestSpec = requestSpec.headers(h -> h.setBearerAuth(bearerToken));
+            }
+
+            MetaApiResponse response = requestSpec
+                    .body(BodyInserters.fromFormData(formBody))
+                    .retrieve()
+                    .bodyToMono(MetaApiResponse.class)
+                    .block();
+
+            return response != null ? response : emptySuccess();
+
+        } catch (WebClientResponseException ex) {
             return parseErrorResponse(ex);
-        } catch (HttpServerErrorException ex) {
-            throw new MetaApiException("Meta API server error: " + ex.getMessage(), ex);
         } catch (Exception ex) {
             throw new MetaApiException("Failed to call Meta API: " + ex.getMessage(), ex);
         }
     }
 
-    private MetaApiResponse handleResponse(ResponseEntity<MetaApiResponse> response) {
-        MetaApiResponse body = response.getBody();
-        if (body == null) {
-            MetaApiResponse empty = new MetaApiResponse();
-            empty.setSuccess(response.getStatusCode().is2xxSuccessful());
-            return empty;
-        }
-        if (body.getSuccess() == null && response.getStatusCode().is2xxSuccessful()) {
-            body.setSuccess(true);
-        }
-        return body;
+    private MetaApiResponse emptySuccess() {
+        MetaApiResponse r = new MetaApiResponse();
+        r.setSuccess(true);
+        return r;
     }
 
-    private MetaApiResponse parseErrorResponse(HttpClientErrorException ex) {
+    private MetaApiResponse parseErrorResponse(WebClientResponseException ex) {
         try {
-            MetaApiResponse errorResponse = objectMapper.readValue(
-                    ex.getResponseBodyAsString(), MetaApiResponse.class);
-            errorResponse.setSuccess(false);
-            log.warn("Meta API client error {}: {}", ex.getStatusCode(), errorResponse.getErrorMessage());
-            return errorResponse;
+            // Try to deserialize Meta's error JSON body
+            String body = ex.getResponseBodyAsString();
+            log.warn("Meta API error {}: {}", ex.getStatusCode(), body);
+
+            // If it's a server error (5xx), throw so retry logic can handle it
+            if (ex.getStatusCode().is5xxServerError()) {
+                throw new MetaApiException("Meta API server error: " + ex.getMessage(), ex);
+            }
+
+            // For 4xx, return as a failed MetaApiResponse so callers can inspect it
+            MetaApiResponse fallback = new MetaApiResponse();
+            fallback.setSuccess(false);
+            // Populate the error map so getErrorMessage() works
+            fallback.setExtra("error", Map.of(
+                    "message", ex.getMessage(),
+                    "code",    ex.getStatusCode().value()
+            ));
+            return fallback;
+
+        } catch (MetaApiException metaEx) {
+            throw metaEx;
         } catch (Exception parseEx) {
-            log.warn("Meta API error (unparseable): status={}, body={}",
-                    ex.getStatusCode(), ex.getResponseBodyAsString());
             MetaApiResponse fallback = new MetaApiResponse();
             fallback.setSuccess(false);
             return fallback;

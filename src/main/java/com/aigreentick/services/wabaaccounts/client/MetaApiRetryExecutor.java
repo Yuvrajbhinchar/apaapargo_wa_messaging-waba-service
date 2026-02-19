@@ -76,7 +76,6 @@ public class MetaApiRetryExecutor {
             190,  // OAuthException: invalid/expired token
             200,  // Permission error
             10,   // Permission denied
-            200,  // Application permission
             100,  // Invalid parameter
             102   // Session key invalid / must be re-authenticated
     );
