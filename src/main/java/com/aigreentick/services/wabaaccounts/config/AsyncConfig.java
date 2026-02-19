@@ -9,17 +9,23 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import java.util.concurrent.Executor;
 
 /**
- * Thread pool configuration for async onboarding tasks.
+ * Thread pool configuration for async tasks.
  *
- * onboardingTaskExecutor — used by OnboardingOrchestrator
- * ─────────────────────────────────────────────────────────
- * Each task runs the full Meta API flow (8–12s), so we size the pool
- * conservatively. You almost certainly don't want 100 simultaneous
- * Meta API connections. Start at corePoolSize=4 and tune from there.
+ * TWO POOLS:
  *
- * Queue capacity of 50 means we can backlog 50 tasks before new
- * enqueue calls get the CallerRunsPolicy (runs on the controller thread,
- * defeating the async goal). Raise it if your onboarding volume spikes.
+ * onboardingTaskExecutor — used by OnboardingAsyncDispatcher
+ * ──────────────────────────────────────────────────────────
+ * Each task runs the full Meta API flow (8-12s peak, 2-4s typical).
+ * corePoolSize=4: handles steady-state load without thread churn.
+ * maxPoolSize=10: burst capacity for signup spikes.
+ * queueCapacity=50: backlog before CallerRunsPolicy kicks in.
+ * Raise queueCapacity if you see "http-nio-*" threads doing onboarding work.
+ *
+ * webhookTaskExecutor — used by WebhookService
+ * ─────────────────────────────────────────────
+ * Webhook processing is fast (simple DB writes, no external I/O).
+ * Separate pool prevents webhook bursts from starving onboarding tasks.
+ * corePoolSize=2 / maxPoolSize=5 is sufficient for typical Meta webhook volume.
  */
 @Configuration
 @EnableAsync
@@ -35,6 +41,25 @@ public class AsyncConfig {
         executor.setThreadNamePrefix("waba-onboarding-");
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationSeconds(60);
+        executor.initialize();
+        return executor;
+    }
+
+    /**
+     * Executor for WebhookService.processWebhookAsync().
+     * Referenced as @Async("webhookTaskExecutor") in WebhookService.
+     * Without this bean, Spring falls back to SimpleAsyncTaskExecutor
+     * which creates a new thread per invocation — unbounded under load.
+     */
+    @Bean(name = "webhookTaskExecutor")
+    public Executor webhookTaskExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(2);
+        executor.setMaxPoolSize(5);
+        executor.setQueueCapacity(100);
+        executor.setThreadNamePrefix("waba-webhook-");
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(30);
         executor.initialize();
         return executor;
     }

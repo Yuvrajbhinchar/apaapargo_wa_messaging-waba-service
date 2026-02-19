@@ -33,4 +33,8 @@ public interface OnboardingTaskRepository extends JpaRepository<OnboardingTask, 
 
     Optional<OnboardingTask> findByIdempotencyKey(String idempotencyKey);
 
+    // OnboardingTaskRepository
+    @Query("SELECT t FROM OnboardingTask t WHERE t.status = 'FAILED' AND t.startedAt IS NULL")
+    List<OnboardingTask> findNeverStartedFailures();
+
 }

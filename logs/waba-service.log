@@ -574,3 +574,45 @@ Caused by: java.lang.IllegalArgumentException: Could not resolve placeholder 'TO
 2026-02-19T18:05:56.284+05:30  INFO 2720 --- [waba-service] [SpringApplicationShutdownHook] j.LocalContainerEntityManagerFactoryBean : Closing JPA EntityManagerFactory for persistence unit 'default'
 2026-02-19T18:05:56.287+05:30  INFO 2720 --- [waba-service] [SpringApplicationShutdownHook] com.zaxxer.hikari.HikariDataSource       : WabaHikariPool - Shutdown initiated...
 2026-02-19T18:05:56.298+05:30  INFO 2720 --- [waba-service] [SpringApplicationShutdownHook] com.zaxxer.hikari.HikariDataSource       : WabaHikariPool - Shutdown completed.
+2026-02-19T22:24:40.523+05:30  INFO 1864 --- [waba-service] [main] c.a.s.w.WabaServiceApplication           : Starting WabaServiceApplication using Java 21.0.3 with PID 1864 (C:\Users\DELL\Downloads\waba-service\waba-service\target\classes started by DELL in C:\Users\DELL\Downloads\waba-service\waba-service)
+2026-02-19T22:24:40.526+05:30 DEBUG 1864 --- [waba-service] [main] c.a.s.w.WabaServiceApplication           : Running with Spring Boot v3.3.4, Spring v6.1.13
+2026-02-19T22:24:40.527+05:30  INFO 1864 --- [waba-service] [main] c.a.s.w.WabaServiceApplication           : No active profile set, falling back to 1 default profile: "default"
+2026-02-19T22:24:45.020+05:30  INFO 1864 --- [waba-service] [main] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2026-02-19T22:24:45.519+05:30  INFO 1864 --- [waba-service] [main] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 461 ms. Found 5 JPA repository interfaces.
+2026-02-19T22:24:48.570+05:30  INFO 1864 --- [waba-service] [main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8081 (http)
+2026-02-19T22:24:48.604+05:30  INFO 1864 --- [waba-service] [main] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-02-19T22:24:48.604+05:30  INFO 1864 --- [waba-service] [main] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.30]
+2026-02-19T22:24:48.861+05:30  INFO 1864 --- [waba-service] [main] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring embedded WebApplicationContext
+2026-02-19T22:24:48.862+05:30  INFO 1864 --- [waba-service] [main] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 8140 ms
+2026-02-19T22:24:49.578+05:30 DEBUG 1864 --- [waba-service] [main] c.a.s.w.config.ActuatorSecurityFilter    : Filter 'actuatorSecurityFilter' configured for use
+2026-02-19T22:24:50.072+05:30  INFO 1864 --- [waba-service] [main] o.hibernate.jpa.internal.util.LogHelper  : HHH000204: Processing PersistenceUnitInfo [name: default]
+2026-02-19T22:24:50.401+05:30  INFO 1864 --- [waba-service] [main] org.hibernate.Version                    : HHH000412: Hibernate ORM core version 6.5.3.Final
+2026-02-19T22:24:50.519+05:30  INFO 1864 --- [waba-service] [main] o.h.c.internal.RegionFactoryInitiator    : HHH000026: Second-level cache disabled
+2026-02-19T22:24:51.553+05:30  INFO 1864 --- [waba-service] [main] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
+2026-02-19T22:24:51.643+05:30  INFO 1864 --- [waba-service] [main] com.zaxxer.hikari.HikariDataSource       : WabaHikariPool - Starting...
+2026-02-19T22:24:52.076+05:30  INFO 1864 --- [waba-service] [main] com.zaxxer.hikari.pool.HikariPool        : WabaHikariPool - Added connection com.mysql.cj.jdbc.ConnectionImpl@7c50709a
+2026-02-19T22:24:52.086+05:30  INFO 1864 --- [waba-service] [main] com.zaxxer.hikari.HikariDataSource       : WabaHikariPool - Start completed.
+2026-02-19T22:24:54.927+05:30  INFO 1864 --- [waba-service] [main] o.h.e.t.j.p.i.JtaPlatformInitiator       : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2026-02-19T22:24:55.079+05:30  INFO 1864 --- [waba-service] [main] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
+2026-02-19T22:24:55.722+05:30  INFO 1864 --- [waba-service] [main] c.a.s.w.config.MetaConfigValidator       : Validating Meta API configuration...
+2026-02-19T22:24:55.723+05:30  WARN 1864 --- [waba-service] [main] c.a.s.w.config.MetaConfigValidator       : META_EMBEDDED_SIGNUP_CONFIG_ID is not set. The /embedded-signup/config endpoint will return an empty configId. Set this via Meta App Dashboard → WhatsApp → Configuration → Embedded Signup.
+2026-02-19T22:24:55.724+05:30  INFO 1864 --- [waba-service] [main] c.a.s.w.config.MetaConfigValidator       : Meta API configuration validated successfully. App ID: 1234***
+2026-02-19T22:24:56.746+05:30  INFO 1864 --- [waba-service] [main] o.s.d.j.r.query.QueryEnhancerFactory     : Hibernate is in classpath; If applicable, HQL parser will be used.
+2026-02-19T22:24:58.364+05:30  INFO 1864 --- [waba-service] [main] c.a.s.w.security.TokenEncryptionService  : TokenEncryptionService initialized with AES-256-GCM
+2026-02-19T22:25:02.825+05:30  INFO 1864 --- [waba-service] [main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port 8081 (http) with context path '/'
+2026-02-19T22:25:03.026+05:30  INFO 1864 --- [waba-service] [main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8082 (http)
+2026-02-19T22:25:03.028+05:30  INFO 1864 --- [waba-service] [main] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-02-19T22:25:03.030+05:30  INFO 1864 --- [waba-service] [main] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.30]
+2026-02-19T22:25:03.091+05:30  INFO 1864 --- [waba-service] [main] o.a.c.c.C.[Tomcat-1].[localhost].[/]     : Initializing Spring embedded WebApplicationContext
+2026-02-19T22:25:03.092+05:30  INFO 1864 --- [waba-service] [main] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 253 ms
+2026-02-19T22:25:03.126+05:30  INFO 1864 --- [waba-service] [main] o.s.b.a.e.web.EndpointLinksResolver      : Exposing 6 endpoints beneath base path '/actuator'
+2026-02-19T22:25:03.210+05:30  INFO 1864 --- [waba-service] [main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port 8082 (http) with context path '/'
+2026-02-19T22:25:03.249+05:30  INFO 1864 --- [waba-service] [main] c.a.s.w.WabaServiceApplication           : Started WabaServiceApplication in 23.909 seconds (process running for 24.976)
+2026-02-19T22:25:03.634+05:30  INFO 1864 --- [waba-service] [scheduling-1] c.a.s.w.service.OnboardingOrchestrator   : Queued 0 retryable onboarding tasks
+2026-02-19T22:26:11.642+05:30  INFO 1864 --- [waba-service] [SpringApplicationShutdownHook] o.s.b.w.e.tomcat.GracefulShutdown        : Commencing graceful shutdown. Waiting for active requests to complete
+2026-02-19T22:26:11.663+05:30  INFO 1864 --- [waba-service] [tomcat-shutdown] o.s.b.w.e.tomcat.GracefulShutdown        : Graceful shutdown complete
+2026-02-19T22:26:11.676+05:30  INFO 1864 --- [waba-service] [SpringApplicationShutdownHook] o.s.b.w.e.tomcat.GracefulShutdown        : Commencing graceful shutdown. Waiting for active requests to complete
+2026-02-19T22:26:11.688+05:30  INFO 1864 --- [waba-service] [tomcat-shutdown] o.s.b.w.e.tomcat.GracefulShutdown        : Graceful shutdown complete
+2026-02-19T22:26:11.704+05:30  INFO 1864 --- [waba-service] [SpringApplicationShutdownHook] j.LocalContainerEntityManagerFactoryBean : Closing JPA EntityManagerFactory for persistence unit 'default'
+2026-02-19T22:26:11.707+05:30  INFO 1864 --- [waba-service] [SpringApplicationShutdownHook] com.zaxxer.hikari.HikariDataSource       : WabaHikariPool - Shutdown initiated...
+2026-02-19T22:26:11.724+05:30  INFO 1864 --- [waba-service] [SpringApplicationShutdownHook] com.zaxxer.hikari.HikariDataSource       : WabaHikariPool - Shutdown completed.

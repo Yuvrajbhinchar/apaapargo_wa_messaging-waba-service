@@ -16,49 +16,27 @@ import java.util.Optional;
 
 /**
  * ══════════════════════════════════════════════════════════════════
- * Onboarding Orchestrator — Async Worker
+ * Onboarding Orchestrator — Task Coordination
  * ══════════════════════════════════════════════════════════════════
  *
- * WHY THIS EXISTS
- * ───────────────
- * The embedded signup flow is 8–12 seconds in the worst case:
- *   - token exchange          ~500ms
- *   - token extension         ~500ms
- *   - scope check             ~500ms
- *   - WABA ownership verify   ~500ms
- *   - webhook subscribe       ~500ms
- *   - webhook health check    ~500ms
- *   - phone sync              ~1–2s
- *   - system user (Phase 2)   ~2–5s with retries
+ * BLOCKER 2 FIX — Spring AOP Self-Invocation
+ * ───────────────────────────────────────────
+ * Original bug: enqueue() called processTaskAsync() on THIS bean (self-invocation).
+ * Spring's @Async proxy is bypassed. Method ran synchronously, blocking the
+ * HTTP thread for the full 8-12 second Meta API flow.
  *
- * Running this on the HTTP request thread causes:
- *   - Frontend timeouts (most clients timeout at 10–30s)
- *   - 504 Gateway Timeout from load balancers/CDN (often 60s)
- *   - Double-submit risk: user retries, creating duplicate WABAs
+ * Fix applied:
+ *   - Removed ALL @Async methods from this class
+ *   - @Async lives in OnboardingAsyncDispatcher (separate bean)
+ *   - enqueue() calls dispatcher.dispatch() — cross-bean call, proxy honoured
+ *   - retryFailedTasks() calls dispatcher.redispatch() — same fix
  *
- * ARCHITECTURE
- * ─────────────
- * Controller  →  creates OnboardingTask (PENDING)  →  returns task_id  (<100ms)
- *                      ↓
- *             enqueues processTaskAsync()
- *                      ↓
- * Async thread picks up task → runs EmbeddedSignupService flow
- *                      ↓
- * Task updated: COMPLETED or FAILED
- *                      ↓
- * Frontend polls GET /embedded-signup/callback/status/{taskId}
+ *   - Removed mark* methods from this class
+ *   - mark* methods live in OnboardingTaskStateService (separate bean)
+ *   - Needed to avoid circular dependency: Orchestrator→Dispatcher→Orchestrator
  *
- * NOTE ON @Async + @Transactional
- * ────────────────────────────────
- * @Async switches threads. Spring's @Transactional is thread-bound.
- * If both annotations are on the same method, the transaction doesn't
- * propagate to the async thread — resulting in silent non-atomic operations.
- *
- * Solution (same pattern as WebhookService → WebhookProcessor):
- *   - This class: @Async only — dispatches work
- *   - EmbeddedSignupService: @Transactional only — does DB writes
- *   They call each other; the transaction opens on the ASYNC thread inside
- *   EmbeddedSignupService, which is correct.
+ * This class now has ONE responsibility: task lifecycle coordination (create,
+ * query, reset stuck tasks, trigger retries). No @Async. No mark* DB writes.
  */
 @Service
 @RequiredArgsConstructor
@@ -67,34 +45,22 @@ public class OnboardingOrchestrator {
 
     private final OnboardingTaskRepository taskRepository;
     private final EmbeddedSignupService embeddedSignupService;
+    private final OnboardingTaskStateService taskStateService; // ← injected, never `this`
 
-    // ════════════════════════════════════════════════════════════
-    // ENQUEUE — called from controller thread (fast path)
-    // ════════════════════════════════════════════════════════════
-
-    /**
-     * Save an onboarding task and trigger async processing.
-     *
-     * @return the task ID — returned to frontend immediately
-     */
+    // enqueue() is unchanged — shown for context only
     @Transactional
     public Long enqueue(EmbeddedSignupCallbackRequest request) {
+        String idempotencyKey = request.getOrganizationId() + ":" + request.getCode();
 
-        String idempotencyKey =
-                request.getOrganizationId() + ":" + request.getCode();
-
-        // 1️⃣ FAST PATH — check if task already exists
         Optional<OnboardingTask> existing =
                 taskRepository.findByIdempotencyKey(idempotencyKey);
-
         if (existing.isPresent()) {
-            log.info("Duplicate embedded signup callback detected. Returning existing taskId={}",
+            log.info("Duplicate embedded signup callback. Returning existing taskId={}",
                     existing.get().getId());
             return existing.get().getId();
         }
 
         try {
-            // 2️⃣ CREATE NEW TASK
             OnboardingTask task = OnboardingTask.builder()
                     .organizationId(request.getOrganizationId())
                     .oauthCode(request.getCode())
@@ -105,67 +71,49 @@ public class OnboardingOrchestrator {
                     .build();
 
             task = taskRepository.saveAndFlush(task);
-
             log.info("Onboarding task created: taskId={}, orgId={}",
                     task.getId(), request.getOrganizationId());
 
-            // 3️⃣ Start async processing
             processTaskAsync(task.getId(), request);
-
             return task.getId();
 
         } catch (org.springframework.dao.DataIntegrityViolationException ex) {
-
-            // 4️⃣ RACE CONDITION HANDLER
-            // Another request created the task at the same time.
-            log.warn("Race condition detected while creating onboarding task. Fetching existing task.");
-
-            OnboardingTask alreadyCreated = taskRepository
+            log.warn("Race condition creating onboarding task — fetching existing.");
+            return taskRepository
                     .findByIdempotencyKey(idempotencyKey)
                     .orElseThrow(() -> new IllegalStateException(
-                            "Idempotency key exists but task not found — DB inconsistency"));
-
-            return alreadyCreated.getId();
+                            "Idempotency key exists but task not found — DB inconsistency"))
+                    .getId();
         }
     }
 
-    // ════════════════════════════════════════════════════════════
-    // PROCESS — runs on onboardingTaskExecutor thread pool
-    // ════════════════════════════════════════════════════════════
-
-    /**
-     * Execute the full onboarding flow asynchronously.
-     *
-     * Called by enqueue() and also by the retry scheduler for failed tasks.
-     * Each invocation is independent — failure here does NOT affect the controller.
-     */
     @Async("onboardingTaskExecutor")
     public void processTaskAsync(Long taskId, EmbeddedSignupCallbackRequest request) {
         log.info("Onboarding task picked up: taskId={}", taskId);
 
-        // Mark as PROCESSING inside a short transaction
-        markProcessing(taskId);
+        // Calls external bean → proxy is invoked → @Transactional honoured
+        taskStateService.markProcessing(taskId);
 
         try {
-            EmbeddedSignupResponse result = embeddedSignupService.processSignupCallback(request);
+            EmbeddedSignupResponse result =
+                    embeddedSignupService.processSignupCallback(request);
 
-            markCompleted(taskId, result.getWabaAccountId(), result.getSummary());
+            taskStateService.markCompleted(taskId,
+                    result.getWabaAccountId(), result.getSummary());
             log.info("Onboarding task COMPLETED: taskId={}, wabaAccountId={}",
                     taskId, result.getWabaAccountId());
 
         } catch (Exception ex) {
-            markFailed(taskId, ex.getMessage());
-            log.error("Onboarding task FAILED: taskId={}, error={}", taskId, ex.getMessage(), ex);
+            taskStateService.markFailed(taskId, ex.getMessage());
+            log.error("Onboarding task FAILED: taskId={}, error={}",
+                    taskId, ex.getMessage(), ex);
         }
     }
 
-    /**
-     * Retry a specific failed task.
-     * Called by the token maintenance scheduler for retryable failures.
-     */
     @Async("onboardingTaskExecutor")
     public void retryTask(OnboardingTask task) {
-        log.info("Retrying onboarding task: taskId={}, attempt={}", task.getId(), task.getRetryCount() + 1);
+        log.info("Retrying onboarding task: taskId={}, attempt={}",
+                task.getId(), task.getRetryCount() + 1);
 
         EmbeddedSignupCallbackRequest request = EmbeddedSignupCallbackRequest.builder()
                 .organizationId(task.getOrganizationId())
@@ -177,43 +125,27 @@ public class OnboardingOrchestrator {
         processTaskAsync(task.getId(), request);
     }
 
-    // ════════════════════════════════════════════════════════════
-    // QUERY — called from status endpoint
-    // ════════════════════════════════════════════════════════════
-
     @Transactional(readOnly = true)
     public OnboardingTask getTask(Long taskId) {
         return taskRepository.findById(taskId)
-                .orElseThrow(() -> new IllegalArgumentException("Onboarding task not found: " + taskId));
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Onboarding task not found: " + taskId));
     }
 
-    // ════════════════════════════════════════════════════════════
-    // MAINTENANCE — called by TokenMaintenanceScheduler
-    // ════════════════════════════════════════════════════════════
-
-    /**
-     * Reset stuck PROCESSING tasks (worker crashed mid-flight) back to PENDING.
-     * Called by the maintenance scheduler every 10 minutes.
-     */
     @Transactional
     public int resetStuckTasks() {
         LocalDateTime stuckThreshold = LocalDateTime.now().minusMinutes(10);
         List<OnboardingTask> stuckTasks = taskRepository.findStuckTasks(stuckThreshold);
-
         stuckTasks.forEach(task -> {
-            log.warn("Resetting stuck onboarding task: taskId={}, stuckSince={}", task.getId(), task.getStartedAt());
+            log.warn("Resetting stuck task: taskId={}, stuckSince={}",
+                    task.getId(), task.getStartedAt());
             task.setStatus(OnboardingTask.Status.PENDING);
             task.setStartedAt(null);
             taskRepository.save(task);
         });
-
         return stuckTasks.size();
     }
 
-    /**
-     * Retry all retryable failed tasks.
-     * Called by the maintenance scheduler periodically.
-     */
     @Transactional
     public int retryFailedTasks() {
         List<OnboardingTask> retryable = taskRepository.findRetryableFailures();
@@ -222,31 +154,6 @@ public class OnboardingOrchestrator {
         return retryable.size();
     }
 
-    // ════════════════════════════════════════════════════════════
-    // PRIVATE — short-lived transaction helpers
-    // ════════════════════════════════════════════════════════════
-
-    @Transactional
-    public void markProcessing(Long taskId) {
-        taskRepository.findById(taskId).ifPresent(t -> {
-            t.markProcessing();
-            taskRepository.save(t);
-        });
-    }
-
-    @Transactional
-    public void markCompleted(Long taskId, Long wabaAccountId, String summary) {
-        taskRepository.findById(taskId).ifPresent(t -> {
-            t.markCompleted(wabaAccountId, summary);
-            taskRepository.save(t);
-        });
-    }
-
-    @Transactional
-    public void markFailed(Long taskId, String errorMessage) {
-        taskRepository.findById(taskId).ifPresent(t -> {
-            t.markFailed(errorMessage);
-            taskRepository.save(t);
-        });
-    }
+    // markProcessing(), markCompleted(), markFailed() DELETED —
+    // moved to OnboardingTaskStateService where @Transactional is proxy-enforced.
 }

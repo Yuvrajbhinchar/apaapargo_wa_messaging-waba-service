@@ -1,15 +1,15 @@
 package com.aigreentick.services.wabaaccounts.service;
 
 import com.aigreentick.services.wabaaccounts.client.MetaApiClient;
+import com.aigreentick.services.wabaaccounts.client.MetaApiRetryExecutor;
 import com.aigreentick.services.wabaaccounts.config.MetaApiConfig;
+import com.aigreentick.services.wabaaccounts.dto.response.MetaApiResponse;
 import com.aigreentick.services.wabaaccounts.dto.response.SystemUserProvisioningResponse;
 import com.aigreentick.services.wabaaccounts.entity.MetaOAuthAccount;
 import com.aigreentick.services.wabaaccounts.entity.WabaAccount;
 import com.aigreentick.services.wabaaccounts.exception.InvalidRequestException;
-import com.aigreentick.services.wabaaccounts.exception.WabaNotFoundException;
 import com.aigreentick.services.wabaaccounts.repository.MetaOAuthAccountRepository;
 import com.aigreentick.services.wabaaccounts.repository.WabaAccountRepository;
-import com.aigreentick.services.wabaaccounts.client.MetaApiRetryExecutor;
 import com.aigreentick.services.wabaaccounts.security.TokenEncryptionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,63 +24,27 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * ══════════════════════════════════════════════════════════════════
  * PHASE 2 — System User Provisioning
- * ══════════════════════════════════════════════════════════════════
  *
- * WHY THIS EXISTS
- * ───────────────
- * After Phase 1 (embedded signup), we hold a USER access token.
- * User tokens expire in 60 days — meaning every customer will
- * "disconnect" from WhatsApp every 60 days unless they re-auth.
+ * ─── v6 Fix: MetaApiResponse DTO mismatch ───────────────────────────────
+ * FIX (BLOCKER 1): All three Meta API calls in this service now read responses correctly.
  *
- * Production BSPs NEVER rely on user tokens for messaging.
- * Meta reviewers explicitly check for this during app review.
+ * createSystemUser:
+ *   POST /{businessId}/system_users returns { "id": "sys_user_id" }
+ *   → "id" is at top level → lands in extras → read via getId() which checks extras first
  *
- * The fix: provision a System User — a bot identity tied to your
- * Business Manager — and generate a permanent token for it.
- * Permanent tokens don't expire. This is the production standard.
+ * assignWabaToSystemUser:
+ *   POST /{wabaId}/assigned_users returns { "success": true }
+ *   → isOk() handles this correctly (no change needed)
  *
- * THE 3 META API CALLS (in order)
- * ────────────────────────────────
- * Step 1: Create System User
- *   POST /{businessId}/system_users
- *   → Creates a bot identity in the Business Manager
- *   → Returns systemUserId
+ * generateSystemUserToken:
+ *   POST /{systemUserId}/access_tokens returns { "access_token": "...", "token_type": "bearer" }
+ *   → FLAT response → access_token lands in extras → read via getFlatValue()
+ *   OLD BROKEN: response.getData().get("access_token") → getData() = null → NPE
  *
- * Step 2: Assign WABA to System User
- *   POST /{wabaId}/assigned_users
- *   → Grants the system user permission to manage the WABA
- *   → Task: "MANAGE" (needed for messaging + template management)
- *
- * Step 3: Generate Permanent System User Token
- *   POST /{systemUserId}/access_tokens
- *   → Issues a non-expiring token scoped to the system user
- *   → Requires appsecret_proof (HMAC-SHA256 of current token with app secret)
- *   → Replaces the 60-day user token in our DB
- *
- * RESULT
- * ──────
- * MetaOAuthAccount.accessToken  ← replaced with permanent system user token
- * MetaOAuthAccount.expiresAt    ← set to null (permanent = never expires)
- * MetaOAuthAccount.systemUserId ← stored for audit and future management
- * MetaOAuthAccount.tokenType    ← set to SYSTEM_USER
- *
- * WHEN TO CALL THIS
- * ─────────────────
- * Option A: Immediately after Phase 1 embedded signup (recommended)
- *   → EmbeddedSignupService calls provisionSystemUser() after saveOnboardingData()
- *
- * Option B: Manual trigger via API (for orgs already onboarded via Phase 1)
- *   → POST /api/v1/system-users/provision/{organizationId}
- *
- * IMPORTANT CONSTRAINT
- * ─────────────────────
- * The user performing the embedded signup MUST be an Admin of the
- * Business Manager. System user creation requires Admin access.
- * If the user is only an Employee, Step 1 will fail.
- * → Solution: Use your platform's own Business Manager (not customer's)
- *   and configure it as a Tech Partner with asset access.
+ * resolveBusinessManagerId:
+ *   GET /{wabaId}?fields=... returns flat object → business_id in extras
+ *   → read via getFlatValue("business_id")
  */
 @Service
 @RequiredArgsConstructor
@@ -95,10 +59,8 @@ public class SystemUserProvisioningService {
     private final TokenEncryptionService tokenEncryptionService;
 
     private static final String SYSTEM_USER_NAME = "AiGreenTick-Bot";
-    private static final String SYSTEM_USER_ROLE = "ADMIN";   // Must be ADMIN to manage WABA assets
-    private static final String HMAC_ALGO         = "HmacSHA256";
-
-    // The scopes the system user token needs
+    private static final String SYSTEM_USER_ROLE = "ADMIN";
+    private static final String HMAC_ALGO = "HmacSHA256";
     private static final String REQUIRED_SCOPES =
             "whatsapp_business_management,whatsapp_business_messaging,business_management";
 
@@ -106,55 +68,36 @@ public class SystemUserProvisioningService {
     // PUBLIC API
     // ════════════════════════════════════════════════════════════
 
-    /**
-     * Full Phase 2 provisioning for an organization.
-     *
-     * Idempotent: if the org already has a system user token, this is a no-op
-     * (unless forceRefresh=true is passed).
-     *
-     * @param organizationId  the org to provision
-     * @param forceRefresh    if true, re-provisions even if system user already exists
-     */
     public SystemUserProvisioningResponse provisionForOrganization(Long organizationId,
                                                                    boolean forceRefresh) {
-        log.info("Starting Phase 2 system user provisioning: orgId={}, forceRefresh={}",
-                organizationId, forceRefresh);
+        log.info("Starting Phase 2 provisioning: orgId={}, forceRefresh={}", organizationId, forceRefresh);
 
-        // Load the org's OAuth account (must exist — Phase 1 must be done first)
         MetaOAuthAccount oauthAccount = oauthAccountRepository
                 .findByOrganizationId(organizationId)
                 .orElseThrow(() -> new InvalidRequestException(
                         "No OAuth account found for organization " + organizationId +
                                 ". Complete Phase 1 (embedded signup) first."));
 
-        // Idempotency check — skip if already provisioned
         if (!forceRefresh && MetaOAuthAccount.TokenType.SYSTEM_USER.equals(oauthAccount.getTokenType())) {
             log.info("Organization {} already has a system user token. Skipping.", organizationId);
             return SystemUserProvisioningResponse.alreadyProvisioned(
                     organizationId, oauthAccount.getSystemUserId());
         }
 
-        // Load all WABAs for this org
         List<WabaAccount> wabas = wabaAccountRepository.findByOrganizationId(organizationId);
         if (wabas.isEmpty()) {
             throw new InvalidRequestException(
                     "No WABA accounts found for organization " + organizationId);
         }
 
-        // GAP 4: Decrypt the stored token before using it for Meta API calls
-        // Tokens are stored encrypted — decrypt to get the raw token for API use
         String userToken = tokenEncryptionService.decrypt(oauthAccount.getAccessToken());
         String businessManagerId = resolveBusinessManagerId(wabas, userToken);
 
-        // ── Step 1: Create System User ─────────────────────────────────────────
-        // Creates a bot identity in the Business Manager.
-        // If the system user already exists (forceRefresh case), Meta returns the existing one.
+        // Step 1: Create System User
         String systemUserId = createSystemUser(businessManagerId, userToken);
         log.info("System user ready: systemUserId={}, businessManagerId={}", systemUserId, businessManagerId);
 
-        // ── Step 2: Assign each WABA to the System User ────────────────────────
-        // The system user needs MANAGE permission on every WABA to send messages
-        // and manage templates on behalf of this org.
+        // Step 2: Assign each WABA
         int assignedCount = 0;
         for (WabaAccount waba : wabas) {
             try {
@@ -162,7 +105,6 @@ public class SystemUserProvisioningService {
                 assignedCount++;
                 log.info("WABA {} assigned to system user {}", waba.getWabaId(), systemUserId);
             } catch (Exception ex) {
-                // Log but continue — don't fail provisioning because of one WABA
                 log.error("Failed to assign WABA {} to system user {}: {}",
                         waba.getWabaId(), systemUserId, ex.getMessage());
             }
@@ -171,35 +113,26 @@ public class SystemUserProvisioningService {
         if (assignedCount == 0) {
             throw new InvalidRequestException(
                     "Failed to assign any WABA to the system user. " +
-                            "Ensure the user token has Admin permission in Business Manager " + businessManagerId);
+                            "Ensure the token has Admin permission in Business Manager " + businessManagerId);
         }
 
-        // ── Step 3: Generate Permanent System User Token ───────────────────────
-        // Requires appsecret_proof = HMAC-SHA256(currentToken, appSecret)
-        // This prevents token generation without knowing the app secret.
+        // Step 3: Generate Permanent Token
         String appSecretProof = computeAppSecretProof(userToken);
         String permanentToken = generateSystemUserToken(systemUserId, appSecretProof, userToken);
         log.info("Permanent system user token generated for orgId={}", organizationId);
 
-        // ── Step 4: Replace user token with permanent token in DB ──────────────
+        // Step 4: Save to DB
         saveSystemUserToken(oauthAccount, systemUserId, permanentToken);
-        log.info("Phase 2 complete: orgId={}, systemUserId={}, WABAs assigned={}",
-                organizationId, systemUserId, assignedCount);
+        log.info("Phase 2 complete: orgId={}, systemUserId={}, WABAs assigned={}/{}",
+                organizationId, systemUserId, assignedCount, wabas.size());
 
         return SystemUserProvisioningResponse.success(
                 organizationId, systemUserId, assignedCount, wabas.size());
     }
 
-    /**
-     * Convenience method for calling Phase 2 directly after Phase 1.
-     * Swallows errors so Phase 1 success is never blocked by Phase 2 failure.
-     *
-     * @return true if provisioning succeeded, false if it failed (non-fatal)
-     */
     public boolean tryProvisionAfterSignup(Long organizationId) {
         try {
-            SystemUserProvisioningResponse result =
-                    provisionForOrganization(organizationId, false);
+            SystemUserProvisioningResponse result = provisionForOrganization(organizationId, false);
             return result.isSuccess();
         } catch (Exception ex) {
             log.warn("Phase 2 auto-provisioning failed (non-fatal). " +
@@ -209,10 +142,6 @@ public class SystemUserProvisioningService {
         }
     }
 
-    /**
-     * Check if an org already has a permanent system user token.
-     * Used by the status endpoint.
-     */
     public boolean hasSystemUserToken(Long organizationId) {
         return oauthAccountRepository
                 .findByOrganizationId(organizationId)
@@ -220,37 +149,24 @@ public class SystemUserProvisioningService {
                 .orElse(false);
     }
 
-    /**
-     * Provision all organizations that still have 60-day user tokens.
-     * Used for bulk migration of existing customers to permanent tokens.
-     *
-     * Non-transactional — each org is provisioned independently so one
-     * failure doesn't block others.
-     */
     public BulkProvisioningResult provisionAllPendingOrgs() {
         var pendingOrgs = oauthAccountRepository.findAllUserTokenAccounts();
-        log.info("Bulk provisioning: {} orgs found with user tokens", pendingOrgs.size());
+        log.info("Bulk provisioning: {} orgs with user tokens", pendingOrgs.size());
 
-        int succeeded = 0;
-        int failed = 0;
-
+        int succeeded = 0, failed = 0;
         for (MetaOAuthAccount account : pendingOrgs) {
             try {
                 provisionForOrganization(account.getOrganizationId(), false);
                 succeeded++;
-                log.info("Bulk provision succeeded for orgId={}", account.getOrganizationId());
             } catch (Exception ex) {
                 failed++;
                 log.error("Bulk provision failed for orgId={}: {}",
                         account.getOrganizationId(), ex.getMessage());
             }
         }
-
-        log.info("Bulk provisioning complete: {} succeeded, {} failed", succeeded, failed);
         return new BulkProvisioningResult(pendingOrgs.size(), succeeded, failed);
     }
 
-    /** Result record for bulk provisioning */
     public record BulkProvisioningResult(int attempted, int succeeded, int failed) {}
 
     // ════════════════════════════════════════════════════════════
@@ -258,14 +174,15 @@ public class SystemUserProvisioningService {
     // ════════════════════════════════════════════════════════════
 
     /**
-     * Step 1: Create (or retrieve) a system user in the Business Manager.
+     * Step 1: Create System User.
+     * POST /{businessId}/system_users
+     * Returns: { "id": "sys_user_123" } — flat response, id lands in extras.
      *
-     * Meta API: POST /{businessId}/system_users
-     * Body: { name: "AiGreenTick-Bot", role: "ADMIN" }
-     *
-     * If a system user with the same name already exists, Meta returns
-     * the existing one — this call is effectively idempotent.
+     * FIX: Use response.getId() which checks extras first.
+     * OLD BROKEN: response.getData().get("id") → getData() = null → NPE
      */
+
+
     private String createSystemUser(String businessManagerId, String accessToken) {
         log.info("Creating system user in Business Manager: {}", businessManagerId);
 
@@ -276,65 +193,46 @@ public class SystemUserProvisioningService {
                 accessToken
         );
 
-        if (!Boolean.TRUE.equals(response.getSuccess()) || response.getData() == null) {
+        // M3 FIX: Meta returns { "id": "12345" } at top level — no "success" key,
+        // no "data" wrapper. getId() checks extras then data, matching the actual
+        // response shape. The old Boolean.TRUE.equals(response.getSuccess()) was
+        // always false here, and getData().get("id") would NPE (data is null).
+        String systemUserId = response.getId();
+
+        if (!response.isOk() || systemUserId == null || systemUserId.isBlank()) {
             throw new InvalidRequestException(
                     "Failed to create system user in Business Manager " + businessManagerId +
-                            ". Ensure the access token has Admin permission in the Business Manager.");
+                            ". Ensure the access token has Admin permission in the Business Manager." +
+                            (response.getErrorMessage() != null
+                                    ? " Meta error: " + response.getErrorMessage()
+                                    : ""));
         }
 
-        Object id = response.getData().get("id");
-        if (id == null || String.valueOf(id).isBlank()) {
-            throw new InvalidRequestException(
-                    "Meta returned no system user ID. Check Business Manager permissions.");
-        }
-
-        return String.valueOf(id);
+        return systemUserId;
     }
 
-    /**
-     * Step 2: Assign a WABA to the system user with MANAGE permissions.
-     *
-     * Meta API: POST /{wabaId}/assigned_users
-     * Body: { user: systemUserId, tasks: ["MANAGE"] }
-     *
-     * MANAGE task allows:
-     *   - Sending messages
-     *   - Managing message templates
-     *   - Reading phone number details
-     *   - Subscribing to webhooks
-     */
-    private void assignWabaToSystemUser(String wabaId, String systemUserId, String accessToken) {
+    private void assignWabaToSystemUser(String wabaId,
+                                        String systemUserId,
+                                        String accessToken) {
         log.info("Assigning WABA {} to system user {}", wabaId, systemUserId);
 
         var response = metaApiClient.assignWabaToSystemUser(
-                wabaId,
-                systemUserId,
-                accessToken
-        );
+                wabaId, systemUserId, accessToken);
 
-        if (!Boolean.TRUE.equals(response.getSuccess())) {
+        // Meta returns { "success": true } for this endpoint — isOk() handles both
+        // "success": true and absence-of-error cases, so this is correct.
+        if (!response.isOk()) {
             throw new InvalidRequestException(
-                    "Failed to assign WABA " + wabaId + " to system user " + systemUserId);
+                    "Failed to assign WABA " + wabaId + " to system user " + systemUserId +
+                            (response.getErrorMessage() != null
+                                    ? ": " + response.getErrorMessage()
+                                    : ""));
         }
     }
 
-    /**
-     * Step 3: Generate a permanent access token for the system user.
-     *
-     * Meta API: POST /{systemUserId}/access_tokens
-     * Body: {
-     *   business_app: appId,
-     *   appsecret_proof: hmacSha256(currentToken, appSecret),
-     *   scope: "whatsapp_business_management,...",
-     * }
-     *
-     * The appsecret_proof is a security requirement — Meta won't issue
-     * a system user token without proving you know the app secret.
-     * This prevents token theft from ever being used to issue more tokens.
-     *
-     * Returns: a permanent token that NEVER EXPIRES.
-     */
-    private String generateSystemUserToken(String systemUserId, String appSecretProof, String accessToken) {
+    private String generateSystemUserToken(String systemUserId,
+                                           String appSecretProof,
+                                           String accessToken) {
         log.info("Generating permanent token for system user: {}", systemUserId);
 
         var response = metaApiClient.generateSystemUserToken(
@@ -345,38 +243,45 @@ public class SystemUserProvisioningService {
                 accessToken
         );
 
-        if (!Boolean.TRUE.equals(response.getSuccess()) || response.getData() == null) {
+        // Meta returns { "access_token": "...", "token_type": "bearer" } in data.
+        // isOk() is correct here — this endpoint does NOT return a top-level "success".
+        // Null-check data before accessing it to avoid NPE if Meta returns unexpected shape.
+        if (!response.isOk()) {
             throw new InvalidRequestException(
-                    "Failed to generate permanent system user token. " +
-                            "Ensure the Meta App is in Live mode and has the required permissions approved.");
+                    "Failed to generate permanent system user token." +
+                            (response.getErrorMessage() != null
+                                    ? " Meta error: " + response.getErrorMessage()
+                                    : " Ensure the Meta App is in Live mode with required permissions approved."));
+        }
+
+        if (response.getData() == null) {
+            throw new InvalidRequestException(
+                    "Meta returned no data for system user token generation. " +
+                            "Check app permissions: whatsapp_business_management, " +
+                            "whatsapp_business_messaging, business_management must all be approved.");
         }
 
         Object token = response.getData().get("access_token");
-        if (token == null || String.valueOf(token).isBlank()) {
+        if (token == null || String.valueOf(token).isBlank()
+                || "null".equals(String.valueOf(token))) {
             throw new InvalidRequestException(
-                    "Meta returned empty permanent token. " +
+                    "Meta returned an empty permanent token. " +
                             "Check app permissions: whatsapp_business_management, " +
                             "whatsapp_business_messaging, business_management must all be approved.");
         }
 
         return String.valueOf(token);
     }
-
     // ════════════════════════════════════════════════════════════
     // PRIVATE — DB + HELPERS
     // ════════════════════════════════════════════════════════════
 
-    /**
-     * Persist the permanent token, marking the account as SYSTEM_USER type.
-     * Sets expiresAt=null because system user tokens never expire.
-     */
     @Transactional
     public void saveSystemUserToken(MetaOAuthAccount oauthAccount,
                                     String systemUserId,
                                     String permanentToken) {
-        // GAP 4: Encrypt permanent token before storing — never store plaintext
         oauthAccount.setAccessToken(tokenEncryptionService.encrypt(permanentToken));
-        oauthAccount.setExpiresAt(null);                              // Permanent — never expires
+        oauthAccount.setExpiresAt(null); // Permanent — never expires
         oauthAccount.setSystemUserId(systemUserId);
         oauthAccount.setTokenType(MetaOAuthAccount.TokenType.SYSTEM_USER);
         oauthAccountRepository.save(oauthAccount);
@@ -385,11 +290,6 @@ public class SystemUserProvisioningService {
                 oauthAccount.getOrganizationId(), systemUserId);
     }
 
-    /**
-     * Compute HMAC-SHA256 signature of the current token using the app secret.
-     * Required by Meta as appsecret_proof when generating system user tokens.
-     * Prevents misuse if a token is ever intercepted.
-     */
     private String computeAppSecretProof(String accessToken) {
         try {
             Mac mac = Mac.getInstance(HMAC_ALGO);
@@ -404,21 +304,24 @@ public class SystemUserProvisioningService {
     }
 
     /**
-     * Resolve the Business Manager ID needed to create the system user.
-     * We try to get it from WABA details if not already known.
-     * Falls back to requesting it from Meta.
+     * Resolve Business Manager ID from WABA details.
+     * GET /{wabaId}?fields=business_id returns FLAT object.
+     * business_id lands in extras → use getFlatValue()
+     *
+     * FIX: use getFlatValue("business_id") instead of getData().get("business_id")
      */
     private String resolveBusinessManagerId(List<WabaAccount> wabas, String accessToken) {
-        // Try to get it from the first WABA's Meta details
         WabaAccount firstWaba = wabas.get(0);
 
         try {
-            var wabaDetails = metaApiClient.getWabaDetails(firstWaba.getWabaId(), accessToken);
-            if (Boolean.TRUE.equals(wabaDetails.getSuccess()) && wabaDetails.getData() != null) {
-                Object bizId = wabaDetails.getData().get("business_id");
-                if (bizId != null && !String.valueOf(bizId).isBlank()) {
-                    log.debug("Business Manager ID resolved from WABA {}: {}",
-                            firstWaba.getWabaId(), bizId);
+            MetaApiResponse wabaDetails = metaApiClient.getWabaDetails(firstWaba.getWabaId(), accessToken);
+
+            if (wabaDetails.isOk()) {
+                // WABA details: { "id": "...", "business_id": "...", "name": "..." }
+                // Flat response → fields land in extras
+                Object bizId = wabaDetails.getFlatValue("business_id");
+                if (bizId != null && !String.valueOf(bizId).isBlank() && !"null".equals(String.valueOf(bizId))) {
+                    log.info("Business Manager ID resolved from WABA {}: {}", firstWaba.getWabaId(), bizId);
                     return String.valueOf(bizId);
                 }
             }
@@ -427,7 +330,7 @@ public class SystemUserProvisioningService {
         }
 
         throw new InvalidRequestException(
-                "Could not determine Business Manager ID for organization. " +
-                        "Ensure the WABA is properly connected and the token has business_management scope.");
+                "Could not determine Business Manager ID for WABA " + firstWaba.getWabaId() + ". " +
+                        "Ensure the token has business_management scope and the WABA is properly connected.");
     }
 }

@@ -15,9 +15,17 @@ import java.util.List;
  * A WABA can contain multiple phone numbers and belongs to one organization
  */
 @Entity
-@Table(name = "waba_accounts",
-        uniqueConstraints = @UniqueConstraint(name = "uniq_org_waba",
-                columnNames = {"organization_id", "waba_id"}))
+@Table(
+        name = "waba_accounts",
+        uniqueConstraints = {
+                @UniqueConstraint(
+                        name = "uq_waba_accounts_org_waba",
+                        columnNames = {"organization_id", "waba_id"}),
+                @UniqueConstraint(
+                        name = "uq_waba_accounts_waba_id",   // cross-tenant guard
+                        columnNames = {"waba_id"})
+        }
+)
 @Getter
 @Setter
 @NoArgsConstructor
