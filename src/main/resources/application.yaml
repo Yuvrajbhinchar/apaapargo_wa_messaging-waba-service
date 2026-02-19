@@ -56,7 +56,7 @@ spring:
 meta:
   app-id: 123456
   app-secret: 123456
-  api-version: v21.0
+  graph-api-version: v21.0   # ← FIX THIS LINE
   graph-api-base-url: https://graph.facebook.com
   webhook-verify-token: 65487900
   # Optional: your Embedded Signup Config ID from Meta App Dashboard
