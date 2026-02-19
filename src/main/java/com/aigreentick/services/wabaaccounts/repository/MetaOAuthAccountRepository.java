@@ -11,32 +11,54 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Repository for Meta OAuth Account operations
+ * Repository for Meta OAuth Account operations.
+ *
+ * ─── Senior Review Fix (BLOCKER 2) — OAuth Domain Model ──────────────────
+ *
+ * Old identity key: (organizationId, businessManagerId)
+ * New identity key: organizationId alone
+ *
+ * One organization = one MetaOAuthAccount = one token.
+ * The token covers access to ALL Business Managers the user authorized.
+ *
+ * Removed:
+ *   - findByOrganizationIdAndBusinessManagerId (BM is no longer the token identity)
+ *   - existsByOrganizationIdAndBusinessManagerId
+ *
+ * Added:
+ *   - findByOrganizationId (the new primary lookup — returns Optional, one per org)
+ *   - existsByOrganizationId (for duplicate check in WabaService)
  */
 @Repository
 public interface MetaOAuthAccountRepository extends JpaRepository<MetaOAuthAccount, Long> {
 
     /**
-     * Find by organization ID
+     * Primary lookup — get the OAuth account for an organization.
+     * Returns Optional because an org may not have connected yet.
+     * There is at most ONE result due to the UNIQUE constraint on organization_id.
      */
-    List<MetaOAuthAccount> findByOrganizationId(Long organizationId);
+    Optional<MetaOAuthAccount> findByOrganizationId(Long organizationId);
 
     /**
-     * Find by organization ID and business manager ID
+     * Check if an org already has a connected OAuth account.
+     * Used in WabaService before creating a new entry.
      */
-    Optional<MetaOAuthAccount> findByOrganizationIdAndBusinessManagerId(
-            Long organizationId,
-            String businessManagerId
-    );
+    boolean existsByOrganizationId(Long organizationId);
 
     /**
-     * Find all tokens expiring before a given time (for refresh scheduling)
+     * Find all tokens expiring before a given threshold.
+     * Used by a scheduled job to proactively refresh tokens before they expire.
+     * Tokens with expiresAt = null are permanent (system user) and are excluded.
      */
-    @Query("SELECT m FROM MetaOAuthAccount m WHERE m.expiresAt IS NOT NULL AND m.expiresAt < :threshold")
+    @Query("SELECT m FROM MetaOAuthAccount m " +
+            "WHERE m.expiresAt IS NOT NULL AND m.expiresAt < :threshold")
     List<MetaOAuthAccount> findExpiredOrExpiringSoon(@Param("threshold") LocalDateTime threshold);
 
     /**
-     * Check if organization already has a business manager connected
+     * Find all user tokens (non-permanent).
+     * System user tokens have expiresAt = null; user tokens have a 60-day expiry.
+     * Used for Phase 2: identifying which orgs still need system user provisioning.
      */
-    boolean existsByOrganizationIdAndBusinessManagerId(Long organizationId, String businessManagerId);
+    @Query("SELECT m FROM MetaOAuthAccount m WHERE m.expiresAt IS NOT NULL")
+    List<MetaOAuthAccount> findAllUserTokenAccounts();
 }

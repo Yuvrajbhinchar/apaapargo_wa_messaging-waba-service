@@ -28,6 +28,9 @@ public class MetaConfigValidator {
 
     private final MetaApiConfig metaApiConfig;
 
+    @org.springframework.beans.factory.annotation.Value("${token.encryption.key:}")
+    private String tokenEncryptionKey;
+
     // Placeholder values that indicate config was not properly set
     private static final java.util.Set<String> PLACEHOLDER_VALUES = java.util.Set.of(
             "",
@@ -48,6 +51,7 @@ public class MetaConfigValidator {
         validateRequired("META_APP_ID", "meta.app-id", metaApiConfig.getAppId());
         validateRequired("META_APP_SECRET", "meta.app-secret", metaApiConfig.getAppSecret());
         validateRequired("WEBHOOK_VERIFY_TOKEN", "meta.webhook-verify-token", metaApiConfig.getWebhookVerifyToken());
+        validateRequired("TOKEN_ENCRYPTION_KEY", "token.encryption.key", tokenEncryptionKey);
 
         // Warn about optional but recommended config
         if (isNullOrPlaceholder(metaApiConfig.getEmbeddedSignupConfigId())) {

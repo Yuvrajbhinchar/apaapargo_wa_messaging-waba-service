@@ -14,6 +14,7 @@ import com.aigreentick.services.wabaaccounts.repository.MetaOAuthAccountReposito
 import com.aigreentick.services.wabaaccounts.repository.WabaAccountRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -23,14 +24,15 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * Service for WABA Account lifecycle management
+ * Service for WABA Account lifecycle management.
  *
- * Responsibilities:
- * - Create WABA after Meta embedded signup
- * - Read/list WABAs per organization
- * - Update WABA status
- * - Sync phone numbers from Meta
- * - Disconnect WABA from platform
+ * ─── Senior Review Fix (BLOCKER 2) ────────────────────────────────────────
+ * saveOrUpdateOAuthAccount() now looks up by organizationId only.
+ * Removed the businessManagerId lookup — the token belongs to the org, not the BM.
+ *
+ * ─── Senior Review Fix (BLOCKER 1 — Race Condition) ───────────────────────
+ * createWabaAccount() now catches DataIntegrityViolationException on save
+ * and maps it to DuplicateWabaException with a friendly message.
  */
 @Service
 @RequiredArgsConstructor
@@ -46,44 +48,38 @@ public class WabaService {
     // CREATE
     // ========================
 
-    /**
-     * Create WABA account after successful Meta embedded signup
-     *
-     * Flow:
-     * 1. Guard duplicate WABA
-     * 2. Save/update Meta OAuth token
-     * 3. Save WABA record
-     * 4. Sync phone numbers from Meta (best-effort, won't fail the request)
-     */
     @Transactional
     public WabaResponse createWabaAccount(CreateWabaRequest request) {
         log.info("Creating WABA: organizationId={}, wabaId={}", request.getOrganizationId(), request.getWabaId());
 
-        // Guard: duplicate WABA for same org
+        // App-level check (fast path)
         if (wabaRepository.existsByOrganizationIdAndWabaId(request.getOrganizationId(), request.getWabaId())) {
             throw DuplicateWabaException.forOrganization(request.getOrganizationId(), request.getWabaId());
         }
 
-        // Save or refresh the OAuth token
         MetaOAuthAccount oauthAccount = saveOrUpdateOAuthAccount(request);
 
-        // Create the WABA record
-        WabaAccount wabaAccount = WabaAccount.builder()
-                .organizationId(request.getOrganizationId())
-                .metaOAuthAccountId(oauthAccount.getId())
-                .wabaId(request.getWabaId())
-                .status(WabaStatus.ACTIVE)
-                .build();
+        // FIX: Catch race condition at DB level
+        WabaAccount wabaAccount;
+        try {
+            wabaAccount = WabaAccount.builder()
+                    .organizationId(request.getOrganizationId())
+                    .metaOAuthAccountId(oauthAccount.getId())
+                    .wabaId(request.getWabaId())
+                    .status(WabaStatus.ACTIVE)
+                    .build();
+            wabaAccount = wabaRepository.save(wabaAccount);
+            log.info("WABA saved: id={}", wabaAccount.getId());
+        } catch (DataIntegrityViolationException ex) {
+            log.warn("Race condition on WABA insert via createWabaAccount: wabaId={}", request.getWabaId());
+            throw new DuplicateWabaException(
+                    "This WABA was already connected by a concurrent request. Please check your WABA list.");
+        }
 
-        wabaAccount = wabaRepository.save(wabaAccount);
-        log.info("WABA saved: id={}", wabaAccount.getId());
-
-        // Sync phone numbers from Meta — best effort (don't fail if Meta is temporarily down)
         try {
             phoneNumberService.syncPhoneNumbersFromMeta(wabaAccount, oauthAccount.getAccessToken());
         } catch (Exception ex) {
-            log.warn("Phone number sync skipped during WABA creation (will auto-retry on next sync). Error: {}",
-                    ex.getMessage());
+            log.warn("Phone number sync skipped during WABA creation. Error: {}", ex.getMessage());
         }
 
         return WabaMapper.toWabaResponseWithPhones(
@@ -95,9 +91,6 @@ public class WabaService {
     // READ
     // ========================
 
-    /**
-     * Get a single WABA with its phone numbers by database ID
-     */
     @Transactional(readOnly = true)
     public WabaResponse getWabaById(Long wabaId) {
         log.debug("Fetching WABA by id: {}", wabaId);
@@ -106,10 +99,6 @@ public class WabaService {
                 .orElseThrow(() -> WabaNotFoundException.withId(wabaId));
     }
 
-    /**
-     * Get all WABAs for an organization — paginated, without phone numbers
-     * Use this for lists/tables in UI
-     */
     @Transactional(readOnly = true)
     public Page<WabaResponse> getWabasByOrganization(Long organizationId, Pageable pageable) {
         log.debug("Fetching WABAs for organizationId={}", organizationId);
@@ -117,10 +106,6 @@ public class WabaService {
                 .map(WabaMapper::toWabaResponse);
     }
 
-    /**
-     * Get all WABAs for an organization with their phone numbers
-     * Use this for dropdowns, project assignment screens
-     */
     @Transactional(readOnly = true)
     public List<WabaResponse> getWabasWithPhonesByOrganization(Long organizationId) {
         log.debug("Fetching WABAs with phones for organizationId={}", organizationId);
@@ -134,43 +119,27 @@ public class WabaService {
     // UPDATE
     // ========================
 
-    /**
-     * Update WABA status (active / suspended / disconnected)
-     * Called by admin or triggered by Meta webhook events
-     */
     @Transactional
     public WabaResponse updateWabaStatus(Long wabaId, UpdateWabaStatusRequest request) {
         log.info("Updating WABA status: wabaId={}, newStatus={}", wabaId, request.getStatus());
-
         WabaAccount waba = wabaRepository.findById(wabaId)
                 .orElseThrow(() -> WabaNotFoundException.withId(wabaId));
-
         WabaStatus oldStatus = waba.getStatus();
-        WabaStatus newStatus = WabaStatus.fromValue(request.getStatus());
-
-        waba.setStatus(newStatus);
+        waba.setStatus(WabaStatus.fromValue(request.getStatus()));
         waba = wabaRepository.save(waba);
-
-        log.info("WABA status changed: wabaId={}, {} → {}", wabaId, oldStatus, newStatus);
+        log.info("WABA status changed: wabaId={}, {} → {}", wabaId, oldStatus, waba.getStatus());
         return WabaMapper.toWabaResponse(waba);
     }
 
-    /**
-     * Manually trigger phone number sync from Meta
-     * Use this when DB may be out of sync (e.g. after downtime during WABA creation)
-     */
     @Transactional
     public WabaResponse syncPhoneNumbers(Long wabaId) {
         log.info("Manual phone sync triggered for wabaId={}", wabaId);
-
         WabaAccount waba = wabaRepository.findById(wabaId)
                 .orElseThrow(() -> WabaNotFoundException.withId(wabaId));
-
         MetaOAuthAccount oauthAccount = metaOAuthRepository.findById(waba.getMetaOAuthAccountId())
-                .orElseThrow(() -> new WabaNotFoundException("OAuth account not found for WABA: " + wabaId));
-
+                .orElseThrow(() -> new WabaNotFoundException(
+                        "OAuth account not found for WABA: " + wabaId));
         phoneNumberService.syncPhoneNumbersFromMeta(waba, oauthAccount.getAccessToken());
-
         return WabaMapper.toWabaResponseWithPhones(
                 wabaRepository.findByIdWithPhoneNumbers(wabaId)
                         .orElseThrow(() -> WabaNotFoundException.withId(wabaId))
@@ -181,17 +150,11 @@ public class WabaService {
     // DELETE / DISCONNECT
     // ========================
 
-    /**
-     * Disconnect WABA from the platform
-     * Sets status to DISCONNECTED — does NOT delete from Meta
-     */
     @Transactional
     public void disconnectWaba(Long wabaId) {
         log.info("Disconnecting WABA: wabaId={}", wabaId);
-
         WabaAccount waba = wabaRepository.findById(wabaId)
                 .orElseThrow(() -> WabaNotFoundException.withId(wabaId));
-
         waba.disconnect();
         wabaRepository.save(waba);
         log.info("WABA disconnected: wabaId={}", wabaId);
@@ -202,33 +165,36 @@ public class WabaService {
     // ========================
 
     /**
-     * Save or update Meta OAuth account for a given Business Manager ID.
-     * If the same BM was connected before, updates the token.
-     * Otherwise creates a new OAuth account record.
+     * FIX (BLOCKER 2): Look up OAuth account by organizationId only.
+     *
+     * Old: findByOrganizationIdAndBusinessManagerId(orgId, bmId)
+     *   → Created a new row for each Business Manager the user had
+     *   → Same user connecting 2nd WABA from different BM = 2 OAuth rows
+     *
+     * New: findByOrganizationId(orgId)
+     *   → One token per org. If org already has a token, we refresh it.
+     *   → All WABAs under the org share the same OAuth account.
      */
     private MetaOAuthAccount saveOrUpdateOAuthAccount(CreateWabaRequest request) {
         return metaOAuthRepository
-                .findByOrganizationIdAndBusinessManagerId(
-                        request.getOrganizationId(),
-                        request.getBusinessManagerId())
+                .findByOrganizationId(request.getOrganizationId())
                 .map(existing -> {
                     existing.setAccessToken(request.getAccessToken());
                     if (request.getExpiresIn() != null) {
                         existing.setExpiresAt(LocalDateTime.now().plusSeconds(request.getExpiresIn()));
                     }
-                    log.info("OAuth token refreshed for businessManagerId={}", request.getBusinessManagerId());
+                    log.info("OAuth token refreshed for orgId={}", request.getOrganizationId());
                     return metaOAuthRepository.save(existing);
                 })
                 .orElseGet(() -> {
                     MetaOAuthAccount newAccount = MetaOAuthAccount.builder()
                             .organizationId(request.getOrganizationId())
-                            .businessManagerId(request.getBusinessManagerId())
                             .accessToken(request.getAccessToken())
                             .expiresAt(request.getExpiresIn() != null
                                     ? LocalDateTime.now().plusSeconds(request.getExpiresIn())
                                     : null)
                             .build();
-                    log.info("New OAuth account created for businessManagerId={}", request.getBusinessManagerId());
+                    log.info("New OAuth account created for orgId={}", request.getOrganizationId());
                     return metaOAuthRepository.save(newAccount);
                 });
     }

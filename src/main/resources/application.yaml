@@ -62,6 +62,19 @@ meta:
   # Optional: your Embedded Signup Config ID from Meta App Dashboard
   embedded-signup-config-id: ${META_EMBEDDED_SIGNUP_CONFIG_ID:}
 
+
+  # ─────────────────────────────────────────────────────────────
+  # TOKEN ENCRYPTION (GAP 4)
+  # AES-256-GCM encryption for Meta access tokens stored in DB.
+  # Generate key: openssl rand -hex 32
+  # CRITICAL: Changing this key makes all existing tokens unreadable.
+  # Rotate safely: decrypt all → re-encrypt with new key → then swap.
+  # ─────────────────────────────────────────────────────────────
+token:
+  encryption:
+    key: ${TOKEN_ENCRYPTION_KEY}
+
+
 # ─────────────────────────────────────────────────────────────
 # RESILIENCE4J — Fault tolerance for Meta API calls
 # ─────────────────────────────────────────────────────────────
@@ -106,7 +119,6 @@ resilience4j:
         limit-for-period: 80
         limit-refresh-period: 1m
         timeout-duration: 0s
-
 
 # ─────────────────────────────────────────────────────────────
 # ACTUATOR
