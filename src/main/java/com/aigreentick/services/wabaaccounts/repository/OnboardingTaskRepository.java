@@ -30,4 +30,7 @@ public interface OnboardingTaskRepository extends JpaRepository<OnboardingTask, 
     @Query("SELECT t FROM OnboardingTask t " +
             "WHERE t.status = 'PROCESSING' AND t.startedAt < :stuckThreshold")
     List<OnboardingTask> findStuckTasks(@Param("stuckThreshold") LocalDateTime stuckThreshold);
+
+    Optional<OnboardingTask> findByIdempotencyKey(String idempotencyKey);
+
 }

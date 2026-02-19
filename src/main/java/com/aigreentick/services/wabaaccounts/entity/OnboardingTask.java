@@ -32,6 +32,9 @@ import java.time.LocalDateTime;
 @Entity
 @Table(
         name = "onboarding_tasks",
+        uniqueConstraints = {
+                @UniqueConstraint(name = "uq_onboarding_idempotency", columnNames = "idempotency_key")
+        },
         indexes = {
                 @Index(name = "idx_onboarding_org", columnList = "organization_id"),
                 @Index(name = "idx_onboarding_status", columnList = "status"),
@@ -84,6 +87,9 @@ public class OnboardingTask {
     @Column(name = "retry_count", nullable = false)
     @Builder.Default
     private int retryCount = 0;
+
+    @Column(name = "idempotency_key", nullable = false, unique = true, length = 200)
+    private String idempotencyKey;
 
     @Column(name = "created_at", updatable = false, insertable = false)
     @CreationTimestamp

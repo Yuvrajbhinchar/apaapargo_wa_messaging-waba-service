@@ -2,7 +2,9 @@ package com.aigreentick.services.wabaaccounts.scheduler;
 
 import com.aigreentick.services.wabaaccounts.client.MetaApiClient;
 import com.aigreentick.services.wabaaccounts.dto.response.MetaApiResponse;
+import com.aigreentick.services.wabaaccounts.entity.MetaOAuthAccount;
 import com.aigreentick.services.wabaaccounts.entity.WabaAccount;
+import com.aigreentick.services.wabaaccounts.repository.MetaOAuthAccountRepository;
 import com.aigreentick.services.wabaaccounts.repository.WabaAccountRepository;
 import com.aigreentick.services.wabaaccounts.service.OnboardingOrchestrator;
 import lombok.RequiredArgsConstructor;
@@ -54,7 +56,7 @@ import java.util.Map;
 @Slf4j
 public class TokenMaintenanceScheduler {
 
-    private final WabaAccountRepository wabaAccountRepository;
+    private final MetaOAuthAccountRepository metaOAuthAccountRepository;
     private final MetaApiClient metaApiClient;
     private final OnboardingOrchestrator orchestrator;
 
@@ -75,7 +77,9 @@ public class TokenMaintenanceScheduler {
     public void runTokenHealthCheck() {
         log.info("=== Token Health Check START ===");
 
-        List<WabaAccount> activeAccounts = wabaAccountRepository.findAllActive();
+        List<MetaOAuthAccount> activeAccounts =
+                metaOAuthAccountRepository.findAll();
+
 
         if (activeAccounts.isEmpty()) {
             log.info("No active WABA accounts to check");
@@ -86,7 +90,7 @@ public class TokenMaintenanceScheduler {
 
         int healthy = 0, expiringSoon = 0, invalid = 0, errors = 0;
 
-        for (WabaAccount account : activeAccounts) {
+        for (MetaOAuthAccount account : activeAccounts) {
             try {
                 TokenHealthResult result = checkTokenHealth(account);
                 switch (result) {
@@ -123,7 +127,7 @@ public class TokenMaintenanceScheduler {
      * with a permanent SYSTEM_USER token. If we still see a USER token type,
      * Phase 2 provisioning is incomplete.
      */
-    private TokenHealthResult checkTokenHealth(WabaAccount account) {
+    private TokenHealthResult checkTokenHealth(MetaOAuthAccount account) {
         String token = account.getAccessToken();
         if (token == null || token.isBlank()) {
             log.error("Account {} has no access token stored — cannot send messages", account.getId());
@@ -151,10 +155,11 @@ public class TokenMaintenanceScheduler {
 
         // ── Validity check ──────────────────────────────────────
         if (!Boolean.TRUE.equals(isValid)) {
-            log.error("Account {}: token is INVALID or REVOKED (type={}, wabaId={}). " +
-                            "User may have revoked app access via Meta privacy settings. " +
-                            "Re-onboarding required.",
-                    account.getId(), tokenType, account.getWabaId());
+            log.error("Org {}: token INVALID/REVOKED (oauthAccountId={}, type={}). " +
+                            "Customer must reconnect Meta.",
+                    account.getOrganizationId(),
+                    account.getId(),
+                    tokenType);
             // TODO: mark account as TOKEN_REVOKED, alert ops, suspend messaging
             return TokenHealthResult.INVALID;
         }
@@ -192,8 +197,10 @@ public class TokenMaintenanceScheduler {
             }
         }
 
-        log.debug("Account {}: token healthy (type={}, wabaId={})",
-                account.getId(), tokenType, account.getWabaId());
+        log.debug("Org {}: token healthy (oauthAccountId={}, type={})",
+                account.getOrganizationId(),
+                account.getId(),
+                tokenType);
         return TokenHealthResult.HEALTHY;
     }
 

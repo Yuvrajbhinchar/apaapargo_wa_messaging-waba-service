@@ -12,6 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * ══════════════════════════════════════════════════════════════════
@@ -78,21 +79,54 @@ public class OnboardingOrchestrator {
      */
     @Transactional
     public Long enqueue(EmbeddedSignupCallbackRequest request) {
-        OnboardingTask task = OnboardingTask.builder()
-                .organizationId(request.getOrganizationId())
-                .oauthCode(request.getCode())
-                .wabaId(request.getWabaId())
-                .businessManagerId(request.getBusinessManagerId())
-                .status(OnboardingTask.Status.PENDING)
-                .build();
-        task = taskRepository.save(task);
 
-        log.info("Onboarding task created: taskId={}, orgId={}", task.getId(), request.getOrganizationId());
+        String idempotencyKey =
+                request.getOrganizationId() + ":" + request.getCode();
 
-        // Trigger async processing — this returns immediately
-        processTaskAsync(task.getId(), request);
+        // 1️⃣ FAST PATH — check if task already exists
+        Optional<OnboardingTask> existing =
+                taskRepository.findByIdempotencyKey(idempotencyKey);
 
-        return task.getId();
+        if (existing.isPresent()) {
+            log.info("Duplicate embedded signup callback detected. Returning existing taskId={}",
+                    existing.get().getId());
+            return existing.get().getId();
+        }
+
+        try {
+            // 2️⃣ CREATE NEW TASK
+            OnboardingTask task = OnboardingTask.builder()
+                    .organizationId(request.getOrganizationId())
+                    .oauthCode(request.getCode())
+                    .wabaId(request.getWabaId())
+                    .businessManagerId(request.getBusinessManagerId())
+                    .idempotencyKey(idempotencyKey)
+                    .status(OnboardingTask.Status.PENDING)
+                    .build();
+
+            task = taskRepository.saveAndFlush(task);
+
+            log.info("Onboarding task created: taskId={}, orgId={}",
+                    task.getId(), request.getOrganizationId());
+
+            // 3️⃣ Start async processing
+            processTaskAsync(task.getId(), request);
+
+            return task.getId();
+
+        } catch (org.springframework.dao.DataIntegrityViolationException ex) {
+
+            // 4️⃣ RACE CONDITION HANDLER
+            // Another request created the task at the same time.
+            log.warn("Race condition detected while creating onboarding task. Fetching existing task.");
+
+            OnboardingTask alreadyCreated = taskRepository
+                    .findByIdempotencyKey(idempotencyKey)
+                    .orElseThrow(() -> new IllegalStateException(
+                            "Idempotency key exists but task not found — DB inconsistency"));
+
+            return alreadyCreated.getId();
+        }
     }
 
     // ════════════════════════════════════════════════════════════
