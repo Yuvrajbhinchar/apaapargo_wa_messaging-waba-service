@@ -18,31 +18,35 @@ import org.springframework.web.util.UriComponentsBuilder;
 import java.util.Map;
 
 /**
- * ══════════════════════════════════════════════════════════════════
- * Meta Graph API Client
- * ══════════════════════════════════════════════════════════════════
- *
- * Centralises ALL calls to Meta's Graph API in one place.
- * Each method maps to exactly one Meta endpoint.
+ * Meta Graph API Client — all calls to Meta's Graph API in one place.
  *
  * Design rules:
  *   1. Never throw checked exceptions — wrap in MetaApiException
  *   2. Never log access tokens, app secrets, or permanent tokens
  *   3. All methods return MetaApiResponse — callers decide what to do
- *   4. appsecret_proof is the caller's responsibility to compute
  *
- * Phase 1 methods (EmbeddedSignupService):
+ * Phase 1 (EmbeddedSignupService):
  *   - exchangeCodeForToken()        POST /oauth/access_token
  *   - extendAccessToken()           GET  /oauth/access_token?grant_type=fb_exchange_token
- *   - getWabaDetails()              GET  /{wabaId}?fields=id,name,business_id
- *   - getSharedWabas()              GET  /me/businesses + /{bizId}/owned_whatsapp_business_accounts
+ *   - getWabaDetails()              GET  /{wabaId}?fields=...
+ *   - getSharedWabas()              GET  /{bizId}/client_whatsapp_business_accounts
  *   - getPhoneNumbers()             GET  /{wabaId}/phone_numbers
  *   - subscribeWabaWebhook()        POST /{wabaId}/subscribed_apps
+ *   - getUserPermissions()          GET  /me/permissions
+ *   - getSubscribedApps()           GET  /{wabaId}/subscribed_apps
  *
- * Phase 2 methods (SystemUserProvisioningService):
+ * Phase 1.5 (PhoneNumberService):
+ *   - registerPhoneNumber()         POST /{phoneNumberId}/register
+ *   - requestVerificationCode()     POST /{phoneNumberId}/request_code
+ *   - verifyCode()                  POST /{phoneNumberId}/verify_code
+ *
+ * Phase 2 (SystemUserProvisioningService):
  *   - createSystemUser()            POST /{businessId}/system_users
  *   - assignWabaToSystemUser()      POST /{wabaId}/assigned_users
  *   - generateSystemUserToken()     POST /{systemUserId}/access_tokens
+ *
+ * Token Health (TokenHealthScheduler):
+ *   - debugToken()                  GET  /debug_token
  */
 @Component
 @RequiredArgsConstructor
@@ -58,17 +62,16 @@ public class MetaApiClient {
     // ════════════════════════════════════════════════════════════
 
     /**
-     * Exchange short-lived OAuth code for a short-lived user access token.
+     * Exchange short-lived OAuth code for user access token.
      * POST /oauth/access_token
      */
     public MetaApiResponse exchangeCodeForToken(String code) {
-        log.debug("Exchanging OAuth code for user token");
+        log.info("Exchanging OAuth code for access token");
         String url = UriComponentsBuilder
                 .fromUriString(config.getVersionedBaseUrl() + "/oauth/access_token")
+                .queryParam("code",          code)
                 .queryParam("client_id",     config.getAppId())
                 .queryParam("client_secret", config.getAppSecret())
-                .queryParam("code",          code)
-                .queryParam("grant_type",    "authorization_code")
                 .toUriString();
         return get(url);
     }
@@ -90,8 +93,8 @@ public class MetaApiClient {
     }
 
     /**
-     * Get WABA details including the owning Business Manager ID.
-     * GET /{wabaId}?fields=id,name,currency,timezone_id,business_id,message_template_namespace
+     * Get WABA details including Business Manager ID.
+     * GET /{wabaId}?fields=id,name,currency,timezone_id,business_id,...
      */
     public MetaApiResponse getWabaDetails(String wabaId, String accessToken) {
         log.debug("Fetching WABA details: wabaId={}", wabaId);
@@ -116,23 +119,14 @@ public class MetaApiClient {
         return get(url);
     }
 
-    /**
-     * Alias used by EmbeddedSignupService for WABA discovery.
-     * Delegates to getUserBusinesses().
-     */
+    /** Alias for getUserBusinesses — used by EmbeddedSignupService */
     public MetaApiResponse getBusinessAccounts(String accessToken) {
         return getUserBusinesses(accessToken);
     }
 
     /**
-     * Get all OAuth permissions granted by the user for this token.
-     *
+     * Get all OAuth permissions granted by the user's token.
      * GET /me/permissions
-     *
-     * Response: { "data": [ { "permission": "whatsapp_business_management", "status": "granted" }, ... ] }
-     *
-     * Use after token exchange to verify ALL required scopes were granted.
-     * Users can de-select scopes during the OAuth dialog — never assume they granted everything.
      */
     public MetaApiResponse getUserPermissions(String accessToken) {
         log.debug("Fetching token permissions");
@@ -144,13 +138,8 @@ public class MetaApiClient {
     }
 
     /**
-     * Get the currently subscribed apps for a WABA (webhook health check).
-     *
+     * Get currently subscribed apps for a WABA (webhook health check).
      * GET /{wabaId}/subscribed_apps
-     *
-     * Use AFTER subscribeWabaWebhook() to confirm the subscription is active.
-     * subscribeWabaWebhook() returning success: true ≠ webhook is working.
-     * This verifies your app actually appears in the subscription list.
      */
     public MetaApiResponse getSubscribedApps(String wabaId, String accessToken) {
         log.debug("Checking subscribed apps for WABA: {}", wabaId);
@@ -162,7 +151,7 @@ public class MetaApiClient {
     }
 
     /**
-     * Get WABAs shared via embedded signup (connected by the user).
+     * Get WABAs shared via embedded signup.
      * GET /{businessId}/client_whatsapp_business_accounts
      */
     public MetaApiResponse getSharedWabas(String businessId, String accessToken) {
@@ -205,54 +194,97 @@ public class MetaApiClient {
     }
 
     // ════════════════════════════════════════════════════════════
+    // PHASE 1.5 — Phone Number Registration & Verification
+    // These methods were missing — caused PhoneNumberService to fail to compile
+    // ════════════════════════════════════════════════════════════
+
+    /**
+     * Register a phone number with Meta WhatsApp Cloud API.
+     *
+     * POST /{phoneNumberId}/register
+     * Body: messaging_product=whatsapp&pin={6-digit-2fa-pin}
+     *
+     * Prerequisites:
+     *   - Phone number must exist in the WABA
+     *   - User must have already set a 2-step verification PIN via WhatsApp
+     *   - WABA must be in ACTIVE status
+     *
+     * On success: phone number transitions to CONNECTED state in Meta's system.
+     * Returns: { "success": true }
+     */
+    public MetaApiResponse registerPhoneNumber(String phoneNumberId,
+                                               String accessToken,
+                                               String pin) {
+        log.info("Registering phone number with Meta: phoneNumberId={}", phoneNumberId);
+        MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
+        body.add("messaging_product", "whatsapp");
+        body.add("pin",              pin);
+        return post(config.getVersionedBaseUrl() + "/" + phoneNumberId + "/register", body, accessToken);
+    }
+
+    /**
+     * Request a verification code for a phone number via SMS or Voice call.
+     *
+     * POST /{phoneNumberId}/request_code
+     * Body: code_method={SMS|VOICE}&language={locale}
+     *
+     * Meta sends an OTP to the phone number.
+     * The customer then provides that OTP to be passed into verifyCode().
+     *
+     * Returns: { "success": true }
+     */
+    public MetaApiResponse requestVerificationCode(String phoneNumberId,
+                                                   String accessToken,
+                                                   String method,
+                                                   String locale) {
+        log.info("Requesting verification code: phoneNumberId={}, method={}", phoneNumberId, method);
+        MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
+        body.add("code_method", method);   // "SMS" or "VOICE"
+        body.add("language",   locale);    // e.g. "en_US"
+        return post(config.getVersionedBaseUrl() + "/" + phoneNumberId + "/request_code", body, accessToken);
+    }
+
+    /**
+     * Verify a phone number with the OTP code received.
+     *
+     * POST /{phoneNumberId}/verify_code
+     * Body: code={6-digit-otp}
+     *
+     * On success: phone number is verified in Meta's system.
+     * Returns: { "success": true }
+     */
+    public MetaApiResponse verifyCode(String phoneNumberId,
+                                      String accessToken,
+                                      String code) {
+        log.info("Verifying OTP for phone number: phoneNumberId={}", phoneNumberId);
+        MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
+        body.add("code", code);
+        return post(config.getVersionedBaseUrl() + "/" + phoneNumberId + "/verify_code", body, accessToken);
+    }
+
+    // ════════════════════════════════════════════════════════════
     // PHASE 2 — System User Provisioning
     // ════════════════════════════════════════════════════════════
 
     /**
      * Step 1 — Create a System User inside a Business Manager.
-     *
      * POST /{businessId}/system_users
-     * Body: name={name}&role={role}&access_token={token}
-     *
-     * Roles: "ADMIN" | "EMPLOYEE"
-     *   ADMIN  → can assign assets, generate tokens, manage permissions
-     *   EMPLOYEE → limited access, cannot manage permissions
-     *
-     * We always use ADMIN so the system user can manage WABAs.
-     * If a system user with the same name already exists, Meta returns
-     * the existing one (effectively idempotent).
-     *
-     * Returns: { "id": "systemUserId" }
      */
     public MetaApiResponse createSystemUser(String businessId,
                                             String name,
                                             String role,
                                             String accessToken) {
-        log.info("Creating system user in Business Manager: businessId={}, name={}, role={}",
-                businessId, name, role);
+        log.info("Creating system user: businessId={}, name={}, role={}", businessId, name, role);
         MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
         body.add("name",         name);
         body.add("role",         role);
         body.add("access_token", accessToken);
-
         return post(config.getVersionedBaseUrl() + "/" + businessId + "/system_users", body, null);
     }
 
     /**
      * Step 2 — Assign a WABA to the System User with MANAGE permissions.
-     *
      * POST /{wabaId}/assigned_users
-     * Body: user={systemUserId}&tasks=["MANAGE"]&access_token={token}
-     *
-     * Tasks available:
-     *   MANAGE         → full access: send messages, manage templates, manage settings
-     *   DEVELOP        → for developers to test
-     *   ANALYZE        → read-only analytics access
-     *
-     * We use MANAGE — the system user must be able to send messages and
-     * manage templates on behalf of the customer's WABA.
-     *
-     * Returns: { "success": true }
      */
     public MetaApiResponse assignWabaToSystemUser(String wabaId,
                                                   String systemUserId,
@@ -262,29 +294,12 @@ public class MetaApiClient {
         body.add("user",         systemUserId);
         body.add("tasks",        "[\"MANAGE\"]");
         body.add("access_token", accessToken);
-
         return post(config.getVersionedBaseUrl() + "/" + wabaId + "/assigned_users", body, null);
     }
 
     /**
      * Step 3 — Generate a permanent access token for the System User.
-     *
      * POST /{systemUserId}/access_tokens
-     * Body: business_app={appId}&appsecret_proof={hmac}&scope={scopes}&access_token={token}
-     *
-     * appsecret_proof:
-     *   HMAC-SHA256(currentAccessToken, appSecret)
-     *   Meta requires this to prove you know the app secret.
-     *   Prevents stolen tokens from being used to issue more tokens.
-     *   Compute with: SystemUserProvisioningService.computeAppSecretProof()
-     *
-     * scope:
-     *   Comma-separated list of permissions the system user token will have.
-     *   Must be a subset of permissions already granted to your Meta App.
-     *
-     * Returns: { "access_token": "EAAxxxPERMANENTTOKENxxx...", "token_type": "bearer" }
-     *
-     * The returned token NEVER EXPIRES. Store it as the primary token.
      */
     public MetaApiResponse generateSystemUserToken(String systemUserId,
                                                    String appId,
@@ -292,14 +307,47 @@ public class MetaApiClient {
                                                    String scope,
                                                    String accessToken) {
         log.info("Generating permanent token for system user: {}", systemUserId);
-        // NOTE: never log appSecretProof or the resulting access token
         MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
-        body.add("business_app",  appId);
+        body.add("business_app",   appId);
         body.add("appsecret_proof", appSecretProof);
-        body.add("scope",          scope);
-        body.add("access_token",   accessToken);
-
+        body.add("scope",           scope);
+        body.add("access_token",    accessToken);
         return post(config.getVersionedBaseUrl() + "/" + systemUserId + "/access_tokens", body, null);
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // TOKEN HEALTH — Used by TokenHealthScheduler
+    // ════════════════════════════════════════════════════════════
+
+    /**
+     * Inspect a token's validity, expiry, and granted scopes.
+     *
+     * GET /debug_token?input_token={token}&access_token={appId}|{appSecret}
+     *
+     * The access_token param uses app access token format (appId|appSecret).
+     * This does NOT require a user token — uses your app credentials directly.
+     *
+     * Response includes:
+     *   - is_valid: false if token is revoked, expired, or invalid
+     *   - expires_at: Unix timestamp of expiry (0 = permanent)
+     *   - scopes: list of granted permissions
+     *   - user_id: Meta user ID who authorized the token
+     *
+     * Use this in your token health scheduler to detect:
+     *   - Revoked tokens (user logged out of Meta, or revoked app access)
+     *   - Expired user tokens (60-day window missed)
+     *   - Missing scopes (user re-authorized with fewer permissions)
+     */
+    public MetaApiResponse debugToken(String tokenToInspect) {
+        log.debug("Inspecting token validity via /debug_token");
+        // App access token = {app_id}|{app_secret}
+        String appAccessToken = config.getAppId() + "|" + config.getAppSecret();
+        String url = UriComponentsBuilder
+                .fromUriString(config.getVersionedBaseUrl() + "/debug_token")
+                .queryParam("input_token",  tokenToInspect)
+                .queryParam("access_token", appAccessToken)
+                .toUriString();
+        return get(url);
     }
 
     // ════════════════════════════════════════════════════════════
@@ -322,12 +370,12 @@ public class MetaApiClient {
 
     private MetaApiResponse post(String url,
                                  MultiValueMap<String, String> formBody,
-                                 String accessToken) {
+                                 String bearerToken) {
         try {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
-            if (accessToken != null) {
-                headers.setBearerAuth(accessToken);
+            if (bearerToken != null) {
+                headers.setBearerAuth(bearerToken);
             }
             HttpEntity<MultiValueMap<String, String>> entity = new HttpEntity<>(formBody, headers);
 
@@ -350,18 +398,12 @@ public class MetaApiClient {
             empty.setSuccess(response.getStatusCode().is2xxSuccessful());
             return empty;
         }
-        // For endpoints that return { "success": true } — mark explicitly
         if (body.getSuccess() == null && response.getStatusCode().is2xxSuccessful()) {
             body.setSuccess(true);
         }
         return body;
     }
 
-    /**
-     * Parse the error body from a 4xx response into a MetaApiResponse.
-     * This allows callers to inspect error.message / error.code
-     * instead of catching exceptions for business logic decisions.
-     */
     private MetaApiResponse parseErrorResponse(HttpClientErrorException ex) {
         try {
             MetaApiResponse errorResponse = objectMapper.readValue(
