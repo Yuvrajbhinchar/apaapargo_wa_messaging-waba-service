@@ -2,6 +2,7 @@ package com.aigreentick.services.wabaaccounts.client;
 
 import com.aigreentick.services.wabaaccounts.dto.response.MetaApiResponse;
 import com.aigreentick.services.wabaaccounts.exception.MetaApiException;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -88,6 +89,7 @@ public class MetaApiRetryExecutor {
      * @return               The successful MetaApiResponse
      * @throws MetaApiException if all retries exhausted or a permanent error occurs
      */
+    @CircuitBreaker(name = "metaApi", fallbackMethod = "circuitBreakerFallback")
     public MetaApiResponse execute(String operationName, Supplier<MetaApiResponse> apiCall) {
         return executeInternal(operationName, null, apiCall);
     }
@@ -99,6 +101,7 @@ public class MetaApiRetryExecutor {
      * @param resourceId     The WABA ID / business ID / system user ID being operated on
      * @param apiCall        The API call to execute
      */
+    @CircuitBreaker(name = "metaApi", fallbackMethod = "circuitBreakerFallbackWithContext")
     public MetaApiResponse executeWithContext(String operationName,
                                               String resourceId,
                                               Supplier<MetaApiResponse> apiCall) {
@@ -214,5 +217,38 @@ public class MetaApiRetryExecutor {
             if ("OAuthException".equals(type)) return true;
         }
         return false;
+    }
+
+    // ════════════════════════════════════════════════════════════
+// CIRCUIT BREAKER FALLBACKS
+// ════════════════════════════════════════════════════════════
+
+    /**
+     * Fallback when circuit is OPEN — Meta API is down, skip retries entirely.
+     * Signature must match execute() + Throwable as last param.
+     */
+    private MetaApiResponse circuitBreakerFallback(String operationName,
+                                                   Supplier<MetaApiResponse> apiCall,
+                                                   Throwable ex) {
+        log.error("Circuit breaker OPEN for Meta API — {} rejected immediately. Cause: {}",
+                operationName, ex.getMessage());
+        throw new MetaApiException(
+                operationName + " failed: Meta API circuit breaker is open. " +
+                        "The API has been failing consistently. Retry later.", ex);
+    }
+
+    /**
+     * Fallback for executeWithContext() — same logic, matching signature.
+     */
+    private MetaApiResponse circuitBreakerFallbackWithContext(String operationName,
+                                                              String resourceId,
+                                                              Supplier<MetaApiResponse> apiCall,
+                                                              Throwable ex) {
+        String context = resourceId != null ? operationName + "[" + resourceId + "]" : operationName;
+        log.error("Circuit breaker OPEN for Meta API — {} rejected immediately. Cause: {}",
+                context, ex.getMessage());
+        throw new MetaApiException(
+                context + " failed: Meta API circuit breaker is open. " +
+                        "The API has been failing consistently. Retry later.", ex);
     }
 }

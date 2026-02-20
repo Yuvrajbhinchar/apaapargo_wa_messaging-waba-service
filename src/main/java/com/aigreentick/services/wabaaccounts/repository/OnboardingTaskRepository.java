@@ -55,12 +55,13 @@ public interface OnboardingTaskRepository extends JpaRepository<OnboardingTask, 
             "ORDER BY t.updatedAt DESC")
     List<OnboardingTask> findFailedTasksForOrg(@Param("orgId") Long orgId);
 
-    /** Find FAILED tasks eligible for automatic scheduler retry. CANCELLED excluded. */
-    @Query("SELECT t FROM OnboardingTask t " +
-            "WHERE t.status = 'FAILED' AND t.retryCount < 3")
-    List<OnboardingTask> findRetryableFailures();
+    // (only tasks whose code was never sent to Meta)
+     @Query("SELECT t FROM OnboardingTask t " +
+     "WHERE t.status = 'FAILED' AND t.retryCount < 3 AND t.startedAt IS NULL")
+     List<OnboardingTask> findRetryableFailures();
 
-    @Query("SELECT t FROM OnboardingTask t " +
+
+     @Query("SELECT t FROM OnboardingTask t " +
             "WHERE t.status = 'PROCESSING' AND t.startedAt < :stuckThreshold")
     List<OnboardingTask> findStuckTasks(@Param("stuckThreshold") LocalDateTime stuckThreshold);
 

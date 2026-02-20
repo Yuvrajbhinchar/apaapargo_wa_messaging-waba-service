@@ -44,6 +44,7 @@ public class OnboardingOrchestrator {
                     .businessManagerId(request.getBusinessManagerId())
                     .phoneNumberId(request.getPhoneNumberId())
                     .signupType(request.getSignupType())
+                    .idempotencyKey(idempotencyKey)
                     .status(OnboardingTask.Status.PENDING)
                     .build();
 

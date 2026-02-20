@@ -59,7 +59,7 @@ public class OnboardingAsyncDispatcher {
         taskStateService.markProcessing(taskId);
 
         try {
-            EmbeddedSignupResponse result = embeddedSignupService.processSignupCallback(request);
+            EmbeddedSignupResponse result = embeddedSignupService.processSignupCallback(request,taskId);
             taskStateService.markCompleted(taskId, result.getWabaAccountId(), result.getSummary());
             log.info("Onboarding task COMPLETED: taskId={}, wabaAccountId={}",
                     taskId, result.getWabaAccountId());

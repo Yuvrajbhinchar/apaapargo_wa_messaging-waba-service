@@ -34,6 +34,7 @@ public class EmbeddedSignupService {
     private final PhoneRegistrationService phoneRegistrationService;
     private final SystemUserProvisioningService systemUserProvisioningService;
     private final OnboardingPersistenceService onboardingPersistenceService; // ← replaces old inline logic
+    private static final long SIGNUP_TIMEOUT_SECONDS = 120;
 
     private static final List<String> REQUIRED_SCOPES = List.of(
             "whatsapp_business_management",
@@ -62,37 +63,47 @@ public class EmbeddedSignupService {
     // MAIN FLOW
     // ═══════════════════════════════════════════════════════════
 
-    public EmbeddedSignupResponse processSignupCallback(EmbeddedSignupCallbackRequest request) {
-        log.info("Embedded signup started: orgId={}, coexistence={}",
-                request.getOrganizationId(), request.isCoexistenceFlow());
+    public EmbeddedSignupResponse processSignupCallback(EmbeddedSignupCallbackRequest request,
+                                                        Long taskId) {
+        long deadlineEpochMs = System.currentTimeMillis() + (SIGNUP_TIMEOUT_SECONDS * 1000);
+        log.info("Embedded signup started: taskId={}, orgId={}, coexistence={}",
+                taskId, request.getOrganizationId(), request.isCoexistenceFlow());
 
         // Step A: Exchange OAuth code
         String shortLivedToken = exchangeCodeForToken(request.getCode());
+        checkDeadline(deadlineEpochMs, "tokenExchange", request.getOrganizationId(),taskId);
 
         // Step B: Extend to long-lived token
         TokenResult tokenResult = extendToLongLivedToken(shortLivedToken);
         log.info("Long-lived token obtained. Expires ~{} days", tokenResult.expiresIn() / 86400);
+        checkDeadline(deadlineEpochMs, "tokenExtension", request.getOrganizationId(),taskId);
 
         // Step C: Verify scopes
         verifyOAuthScopes(tokenResult.accessToken());
+        checkDeadline(deadlineEpochMs, "scopeVerification", request.getOrganizationId(), taskId);
 
         // Step D: Resolve WABA ID
         String wabaId = resolveAndVerifyWabaOwnership(request, tokenResult.accessToken());
+        checkDeadline(deadlineEpochMs, "wabaResolution", request.getOrganizationId(),taskId);
 
         // Step E: Resolve Business Manager ID
         String businessManagerId = resolveBusinessManagerId(request, wabaId, tokenResult.accessToken());
+        checkDeadline(deadlineEpochMs, "businessManagerResolution", request.getOrganizationId(),taskId);
 
         // Step F: Resolve phone number ID
         String resolvedPhoneNumberId = resolvePhoneNumberId(request, wabaId, tokenResult.accessToken());
+        checkDeadline(deadlineEpochMs, "phoneResolution", request.getOrganizationId(),taskId);
 
         // Step G: DB writes via dedicated transactional service bean
         PersistedOnboardingData saved = onboardingPersistenceService.persistOnboardingData(
                 request, tokenResult, wabaId, businessManagerId);
+        checkDeadline(deadlineEpochMs, "persistence", request.getOrganizationId(),taskId);
 
         // Steps G2–J: Best-effort external calls (OUTSIDE transaction)
 
         // Step G2: Webhook subscribe
         boolean webhookOk = subscribeAndVerifyWebhook(wabaId, tokenResult.accessToken());
+        checkDeadline(deadlineEpochMs, "webhookSubscribe", request.getOrganizationId(),taskId);
 
         // Step G3: Phone sync
         List<PhoneNumberResponse> phoneNumbers = new ArrayList<>();
@@ -103,6 +114,7 @@ public class EmbeddedSignupService {
             log.warn("Phone sync failed (retry via /{}/sync). Error: {}",
                     saved.waba().getId(), ex.getMessage());
         }
+        checkDeadline(deadlineEpochMs, "phoneSync", request.getOrganizationId(),taskId);
 
         // Step H: Register phone
         if (resolvedPhoneNumberId != null) {
@@ -114,6 +126,7 @@ public class EmbeddedSignupService {
                 log.warn("Phone registration failed: phoneNumberId={}", resolvedPhoneNumberId);
             }
         }
+        checkDeadline(deadlineEpochMs, "phoneRegistration", request.getOrganizationId(),taskId);
 
         // Step I: SMB sync for coexistence
         if (request.isCoexistenceFlow() && resolvedPhoneNumberId != null) {
@@ -121,10 +134,16 @@ public class EmbeddedSignupService {
             phoneRegistrationService.initiateSmbSync(resolvedPhoneNumberId, tokenResult.accessToken());
         }
 
-        // Step J: Phase 2 provisioning
-        boolean phase2Ok = systemUserProvisioningService.tryProvisionAfterSignup(request.getOrganizationId());
-        if (phase2Ok) {
-            log.info("Phase 2 complete: orgId={}", request.getOrganizationId());
+        // Step J: Phase 2 provisioning — skip if deadline is close
+        boolean phase2Ok = false;
+        if (System.currentTimeMillis() < deadlineEpochMs - 10_000) { // 10s buffer for Phase 2
+            phase2Ok = systemUserProvisioningService.tryProvisionAfterSignup(request.getOrganizationId());
+            if (phase2Ok) {
+                log.info("Phase 2 complete: orgId={}", request.getOrganizationId());
+            }
+        } else {
+            log.warn("Skipping Phase 2 provisioning — deadline approaching. orgId={}. " +
+                    "Will be retried by TokenMaintenanceScheduler.", request.getOrganizationId());
         }
 
         return EmbeddedSignupResponse.builder()
@@ -422,5 +441,22 @@ public class EmbeddedSignupService {
         return !wabaAccountRepository
                 .findByOrganizationIdAndStatus(organizationId, WabaStatus.ACTIVE)
                 .isEmpty();
+    }
+    // ADD this helper method at the bottom of the class (before buildExtrasJson)
+
+    /**
+     * Check if the overall signup deadline has been exceeded.
+     * Called between major steps to fail fast instead of burning
+     * thread pool time on a flow that's already too slow.
+     */
+    private void checkDeadline(long deadlineEpochMs, String stepName, Long orgId, Long taskId) {
+        if (System.currentTimeMillis() > deadlineEpochMs) {
+            String msg = String.format(
+                    "Signup flow timed out at step '%s' for taskId=%d, orgId=%d. " +
+                            "Deadline of %ds exceeded. Meta API may be degraded.",
+                    stepName, taskId, orgId, SIGNUP_TIMEOUT_SECONDS);
+            log.error(msg);
+            throw new InvalidRequestException(msg);
+        }
     }
 }

@@ -59,6 +59,7 @@ public class TokenMaintenanceScheduler {
     private final MetaOAuthAccountRepository metaOAuthAccountRepository;
     private final MetaApiClient metaApiClient;
     private final OnboardingOrchestrator orchestrator;
+    private final com.aigreentick.services.wabaaccounts.security.TokenEncryptionService tokenEncryptionService;
 
     /** Days before expiry to start warning */
     private static final int EXPIRY_WARN_DAYS = 7;
@@ -128,9 +129,18 @@ public class TokenMaintenanceScheduler {
      * Phase 2 provisioning is incomplete.
      */
     private TokenHealthResult checkTokenHealth(MetaOAuthAccount account) {
-        String token = account.getAccessToken();
-        if (token == null || token.isBlank()) {
+        String encryptedToken = account.getAccessToken();
+        if (encryptedToken == null || encryptedToken.isBlank()) {
             log.error("Account {} has no access token stored — cannot send messages", account.getId());
+            return TokenHealthResult.INVALID;
+        }
+
+        String token;
+        try {
+            token = tokenEncryptionService.decrypt(encryptedToken);
+        } catch (Exception ex) {
+            log.error("Account {}: token decryption failed — key mismatch or data corruption. Error: {}",
+                    account.getId(), ex.getMessage());
             return TokenHealthResult.INVALID;
         }
 
