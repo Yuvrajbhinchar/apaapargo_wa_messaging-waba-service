@@ -50,6 +50,7 @@ public class OnboardingAsyncDispatcher {
      *     "Onboarding task picked up on thread [waba-onboarding-1]"
      *   If you see "http-nio-8081-exec-*" — self-invocation is back.
      */
+
     @Async("onboardingTaskExecutor")
     public void dispatch(Long taskId, EmbeddedSignupCallbackRequest request) {
         log.info("Onboarding task picked up on thread [{}]: taskId={}",
@@ -62,7 +63,6 @@ public class OnboardingAsyncDispatcher {
             taskStateService.markCompleted(taskId, result.getWabaAccountId(), result.getSummary());
             log.info("Onboarding task COMPLETED: taskId={}, wabaAccountId={}",
                     taskId, result.getWabaAccountId());
-
         } catch (Exception ex) {
             taskStateService.markFailed(taskId, ex.getMessage());
             log.error("Onboarding task FAILED: taskId={}, error={}", taskId, ex.getMessage(), ex);
@@ -90,32 +90,35 @@ public class OnboardingAsyncDispatcher {
      *   - Task failed BEFORE reaching PROCESSING (e.g., DB error on save)
      *     → startedAt is null → code was never sent to Meta → retry is safe
      */
+
     @Async("onboardingTaskExecutor")
     public void redispatch(OnboardingTask task) {
         log.info("Retry requested for onboarding task: taskId={}, attempt={}, startedAt={}",
                 task.getId(), task.getRetryCount() + 1, task.getStartedAt());
 
-        // ═══ OAuth Retry Safety Guard ═══
+        // OAuth codes are single-use — if task previously reached PROCESSING, code is consumed
         if (task.getStartedAt() != null) {
-            // Task previously reached PROCESSING → code was likely consumed by Meta
             String msg = "OAuth code already consumed (task previously reached PROCESSING at " +
                     task.getStartedAt() + "). " +
-                    "Meta OAuth codes are single-use and cannot be retried. " +
-                    "Customer must restart the embedded signup flow to get a fresh code.";
+                    "Meta OAuth codes are single-use. Customer must restart embedded signup.";
             log.warn("Skipping retry for taskId={}: {}", task.getId(), msg);
             taskStateService.markFailed(task.getId(), msg);
             return;
         }
 
-        // Code was never consumed — safe to retry
         log.info("Retrying onboarding task on thread [{}]: taskId={}, attempt={}",
                 Thread.currentThread().getName(), task.getId(), task.getRetryCount() + 1);
 
+        // FIX 4: Reconstruct FULL request including phoneNumberId and signupType
+        // Without these, retry loses coexistence context → SMB sync skipped,
+        // wrong phone number discovered on re-run
         EmbeddedSignupCallbackRequest request = EmbeddedSignupCallbackRequest.builder()
                 .organizationId(task.getOrganizationId())
                 .code(task.getOauthCode())
                 .wabaId(task.getWabaId())
                 .businessManagerId(task.getBusinessManagerId())
+                .phoneNumberId(task.getPhoneNumberId())       // FIX 4
+                .signupType(task.getSignupType())              // FIX 4
                 .build();
 
         dispatch(task.getId(), request);

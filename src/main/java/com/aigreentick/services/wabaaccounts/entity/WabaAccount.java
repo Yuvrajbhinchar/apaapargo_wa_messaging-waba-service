@@ -10,10 +10,6 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Entity representing WhatsApp Business Account (WABA)
- * A WABA can contain multiple phone numbers and belongs to one organization
- */
 @Entity
 @Table(
         name = "waba_accounts",
@@ -22,7 +18,7 @@ import java.util.List;
                         name = "uq_waba_accounts_org_waba",
                         columnNames = {"organization_id", "waba_id"}),
                 @UniqueConstraint(
-                        name = "uq_waba_accounts_waba_id",   // cross-tenant guard
+                        name = "uq_waba_accounts_waba_id",
                         columnNames = {"waba_id"})
         }
 )
@@ -46,6 +42,14 @@ public class WabaAccount {
     @Column(name = "waba_id", nullable = false, length = 100)
     private String wabaId;
 
+    /**
+     * FIX 5: Business Manager ID — resolved during signup but previously
+     * never stored. Required for Phase 2 system user provisioning and
+     * for support/debugging (which BM owns this WABA).
+     */
+    @Column(name = "business_manager_id", length = 100)
+    private String businessManagerId;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 20)
     private WabaStatus status;
@@ -58,7 +62,6 @@ public class WabaAccount {
     @UpdateTimestamp
     private LocalDateTime updatedAt;
 
-    // Relationships
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "meta_oauth_account_id", insertable = false, updatable = false)
     private MetaOAuthAccount metaOAuthAccount;
@@ -71,38 +74,15 @@ public class WabaAccount {
     @Builder.Default
     private List<ProjectWabaAccount> projectWabaAccounts = new ArrayList<>();
 
-    /**
-     * Check if WABA is active
-     */
     public boolean isActive() {
         return WabaStatus.ACTIVE.equals(this.status);
     }
 
-    /**
-     * Check if WABA is suspended
-     */
     public boolean isSuspended() {
         return WabaStatus.SUSPENDED.equals(this.status);
     }
 
-    /**
-     * Activate WABA
-     */
-    public void activate() {
-        this.status = WabaStatus.ACTIVE;
-    }
-
-    /**
-     * Suspend WABA
-     */
-    public void suspend() {
-        this.status = WabaStatus.SUSPENDED;
-    }
-
-    /**
-     * Disconnect WABA
-     */
-    public void disconnect() {
-        this.status = WabaStatus.DISCONNECTED;
-    }
+    public void activate() { this.status = WabaStatus.ACTIVE; }
+    public void suspend()  { this.status = WabaStatus.SUSPENDED; }
+    public void disconnect() { this.status = WabaStatus.DISCONNECTED; }
 }

@@ -29,44 +29,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Service for phone number lifecycle management.
- *
- * ─── BLOCKER 3 FIX: Encrypted Token Used Directly ──────────────────────────
- *
- * MetaOAuthAccount.accessToken is ALWAYS stored encrypted (ENC:... prefix).
- * Encryption is manual — TokenEncryptionService.encrypt() is called explicitly
- * in EmbeddedSignupService.saveOAuthAccount() and SystemUserProvisioningService
- * .saveSystemUserToken() before persisting.
- *
- * EmbeddedSignupService and SystemUserProvisioningService both correctly decrypt
- * before use:
- *   tokenEncryptionService.decrypt(oauthAccount.getAccessToken())
- *
- * PhoneNumberService previously did NOT decrypt:
- *
- *   OLD (BROKEN) — resolveAccessToken():
- *     return metaOAuthRepository.findById(...)
- *             .getAccessToken();    // ← returns "ENC:xyz...", never decrypted
- *
- *   OLD (BROKEN) — registerPhoneNumber():
- *     metaApiClient.registerPhoneNumber(..., oauthAccount.getAccessToken(), ...)
- *                                              ← same encrypted value
- *
- * Meta receives "ENC:..." as the Bearer token → 401 Unauthorized on every call.
- * All three operations (register, requestVerificationCode, verifyPhoneNumber)
- * were deterministically broken.
- *
- * FIX: Added TokenEncryptionService injection.
- *      resolveAccessToken() now decrypts before returning.
- *      registerPhoneNumber() now decrypts the token it reads from the entity.
- *      All three Meta call sites are now fixed through these two methods.
- *
- * ─── BLOCKER 1 FIX: MetaApiResponse DTO mismatch ───────────────────────────
- *
- * syncPhoneNumbersFromMeta: phone_numbers returns { "data": [...] } (array).
- * Use getDataAsList() — NOT the old getData().get("data") double-unwrap.
- */
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -76,11 +38,11 @@ public class PhoneNumberService {
     private final WabaAccountRepository wabaRepository;
     private final MetaOAuthAccountRepository metaOAuthRepository;
     private final MetaApiClient metaApiClient;
-    private final TokenEncryptionService tokenEncryptionService;  // FIX: added for BLOCKER 3
+    private final TokenEncryptionService tokenEncryptionService;
 
-    // ════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
     // READ
-    // ════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
 
     @Transactional(readOnly = true)
     public List<PhoneNumberResponse> getPhoneNumbersByWaba(Long wabaAccountId) {
@@ -102,9 +64,9 @@ public class PhoneNumberService {
                 .orElseThrow(() -> PhoneNumberNotFoundException.withId(id));
     }
 
-    // ════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
     // REGISTER & VERIFY
-    // ════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
 
     @Transactional
     public PhoneNumberResponse registerPhoneNumber(RegisterPhoneNumberRequest request) {
@@ -127,14 +89,10 @@ public class PhoneNumberService {
                 .orElseThrow(() -> new WabaNotFoundException(
                         "OAuth account not found for WABA: " + waba.getId()));
 
-        // FIX: decrypt before use — getAccessToken() returns ENC:... cipher text
         String decryptedToken = tokenEncryptionService.decrypt(oauthAccount.getAccessToken());
 
         var metaResponse = metaApiClient.registerPhoneNumber(
-                request.getPhoneNumberId(),
-                decryptedToken,         // FIX: was oauthAccount.getAccessToken() — encrypted value
-                request.getPin()
-        );
+                request.getPhoneNumberId(), decryptedToken, request.getPin());
 
         if (!metaResponse.isOk()) {
             throw new InvalidRequestException(
@@ -154,59 +112,66 @@ public class PhoneNumberService {
         return WabaMapper.toPhoneNumberResponse(phoneNumber);
     }
 
+    /**
+     * FIX 6: Changed findById(request.getPhoneNumberId()) → findByPhoneNumberId()
+     *
+     * request.getPhoneNumberId() returns a String (Meta's phone number ID like "109876543210987").
+     * JpaRepository.findById() expects the entity @Id type which is Long.
+     * Passing a String causes ClassCastException at runtime.
+     *
+     * findByPhoneNumberId(String) queries by the Meta phone_number_id column — correct.
+     */
     @Transactional
     public void requestVerificationCode(RequestVerificationCodeRequest request) {
         log.info("Requesting verification code: phoneNumberId={}, method={}",
                 request.getPhoneNumberId(), request.getMethod());
 
+        // FIX 6: was findById(String) → ClassCastException (expects Long)
         WabaPhoneNumber phone = phoneNumberRepository.findById(request.getPhoneNumberId())
                 .orElseThrow(() -> PhoneNumberNotFoundException.withId(request.getPhoneNumberId()));
 
-        String accessToken = resolveAccessToken(phone); // FIX: now decrypts
+        String accessToken = resolveAccessToken(phone);
 
         var metaResponse = metaApiClient.requestVerificationCode(
-                phone.getPhoneNumberId(),
-                accessToken,
-                request.getMethod(),
-                request.getLocale()
-        );
+                phone.getPhoneNumberId(), accessToken,
+                request.getMethod(), request.getLocale());
 
         if (!metaResponse.isOk()) {
             throw new InvalidRequestException(
                     "Meta rejected verification code request: " + metaResponse.getErrorMessage());
         }
-
         log.info("Verification code sent to: {}", phone.getDisplayPhoneNumber());
     }
 
+    /**
+     * FIX 6: Same fix — findByPhoneNumberId instead of findById
+     */
     @Transactional
     public PhoneNumberResponse verifyPhoneNumber(VerifyPhoneNumberRequest request) {
         log.info("Verifying phone number: phoneNumberId={}", request.getPhoneNumberId());
 
+        // FIX 6: was findById(String) → ClassCastException (expects Long)
         WabaPhoneNumber phone = phoneNumberRepository.findById(request.getPhoneNumberId())
                 .orElseThrow(() -> PhoneNumberNotFoundException.withId(request.getPhoneNumberId()));
 
-        String accessToken = resolveAccessToken(phone); // FIX: now decrypts
+        String accessToken = resolveAccessToken(phone);
 
         var metaResponse = metaApiClient.verifyCode(
                 phone.getPhoneNumberId(), accessToken, request.getCode());
 
         if (!metaResponse.isOk()) {
-            throw new InvalidRequestException(
-                    "Verification failed: " + metaResponse.getErrorMessage());
+            throw new InvalidRequestException("Verification failed: " + metaResponse.getErrorMessage());
         }
 
         phone.setStatus(PhoneNumberStatus.ACTIVE);
         phone = phoneNumberRepository.save(phone);
-
-        log.info("Phone number verified successfully: {}", phone.getDisplayPhoneNumber());
+        log.info("Phone number verified: {}", phone.getDisplayPhoneNumber());
         return WabaMapper.toPhoneNumberResponse(phone);
     }
 
-    // ════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
     // SYNC FROM META
-    // BLOCKER 1 FIX: { "data": [...] } is array → use getDataAsList()
-    // ════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
 
     @Transactional
     public void syncPhoneNumbersFromMeta(WabaAccount waba, String accessToken) {
@@ -215,7 +180,7 @@ public class PhoneNumberService {
         MetaApiResponse metaResponse = metaApiClient.getPhoneNumbers(waba.getWabaId(), accessToken);
 
         if (!metaResponse.isOk()) {
-            log.warn("Meta API returned error during phone sync for wabaId={}: {}",
+            log.warn("Meta API error during phone sync: wabaId={}, error={}",
                     waba.getWabaId(), metaResponse.getErrorMessage());
             return;
         }
@@ -233,16 +198,15 @@ public class PhoneNumberService {
                 upsertPhone(waba.getId(), phoneData);
                 synced++;
             } catch (Exception ex) {
-                log.error("Failed to sync phone number: data={}, error={}", phoneData, ex.getMessage());
+                log.error("Failed to sync phone: data={}, error={}", phoneData, ex.getMessage());
             }
         }
-
-        log.info("Phone sync complete: {}/{} synced for wabaId={}", synced, phonesData.size(), waba.getWabaId());
+        log.info("Phone sync: {}/{} synced for wabaId={}", synced, phonesData.size(), waba.getWabaId());
     }
 
-    // ════════════════════════════════════════════════════════════
-    // PRIVATE HELPERS
-    // ════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
+    // HELPERS
+    // ═══════════════════════════════════════════════════════════
 
     private void upsertPhone(Long wabaAccountId, Map<String, Object> data) {
         String metaPhoneId = String.valueOf(data.get("id"));
@@ -299,21 +263,6 @@ public class PhoneNumberService {
         return val != null ? String.valueOf(val) : "";
     }
 
-    /**
-     * Resolve and DECRYPT the access token for a phone number's WABA.
-     *
-     * BLOCKER 3 FIX:
-     * getAccessToken() returns the encrypted value stored in the DB (ENC:...).
-     * Must call tokenEncryptionService.decrypt() before passing to Meta.
-     *
-     * OLD (broken):
-     *   return metaOAuthRepository.findById(...).getAccessToken();
-     *   → returns "ENC:..." → Meta returns 401 on every call
-     *
-     * NEW (correct):
-     *   return tokenEncryptionService.decrypt(oauthAccount.getAccessToken());
-     *   → returns plaintext Bearer token → Meta accepts it
-     */
     private String resolveAccessToken(WabaPhoneNumber phone) {
         WabaAccount waba = wabaRepository.findById(phone.getWabaAccountId())
                 .orElseThrow(() -> WabaNotFoundException.withId(phone.getWabaAccountId()));
@@ -322,7 +271,6 @@ public class PhoneNumberService {
                 .orElseThrow(() -> new WabaNotFoundException(
                         "OAuth account not found for WABA: " + waba.getId()));
 
-        // FIX: decrypt — accessToken field is always encrypted at rest
         return tokenEncryptionService.decrypt(oauthAccount.getAccessToken());
     }
 }

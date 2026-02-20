@@ -91,17 +91,17 @@ public class OnboardingOrchestrator {
                     .oauthCode(request.getCode())
                     .wabaId(request.getWabaId())
                     .businessManagerId(request.getBusinessManagerId())
-                    .idempotencyKey(idempotencyKey)
+                    // FIX 4: persist retry context — without these, retry loses coexistence state
+                    .phoneNumberId(request.getPhoneNumberId())
+                    .signupType(request.getSignupType())
                     .status(OnboardingTask.Status.PENDING)
                     .build();
 
             task = taskRepository.saveAndFlush(task);
-            log.info("Onboarding task created: taskId={}, orgId={}",
-                    task.getId(), request.getOrganizationId());
+            log.info("Onboarding task created: taskId={}, orgId={}, signupType={}",
+                    task.getId(), request.getOrganizationId(), request.getSignupType());
 
-            // ═══ BLOCKER 3 FIX: cross-bean call → @Async honoured ═══
             dispatcher.dispatch(task.getId(), request);
-
             return task.getId();
 
         } catch (org.springframework.dao.DataIntegrityViolationException ex) {
@@ -128,6 +128,7 @@ public class OnboardingOrchestrator {
     // ════════════════════════════════════════════════════════════
     // STUCK TASK RECOVERY — called by TokenMaintenanceScheduler
     // ════════════════════════════════════════════════════════════
+
 
     @Transactional
     public int resetStuckTasks() {
@@ -160,10 +161,7 @@ public class OnboardingOrchestrator {
     @Transactional
     public int retryFailedTasks() {
         List<OnboardingTask> retryable = taskRepository.findRetryableFailures();
-
-        // ═══ BLOCKER 3 FIX: cross-bean dispatch ═══
         retryable.forEach(dispatcher::redispatch);
-
         log.info("Queued {} retryable onboarding tasks", retryable.size());
         return retryable.size();
     }
