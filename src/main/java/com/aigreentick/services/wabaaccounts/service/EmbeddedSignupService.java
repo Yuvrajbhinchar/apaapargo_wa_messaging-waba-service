@@ -9,21 +9,14 @@ import com.aigreentick.services.wabaaccounts.dto.response.EmbeddedSignupResponse
 import com.aigreentick.services.wabaaccounts.dto.response.MetaApiResponse;
 import com.aigreentick.services.wabaaccounts.dto.response.PhoneNumberResponse;
 import com.aigreentick.services.wabaaccounts.dto.response.SignupConfigResponse;
-import com.aigreentick.services.wabaaccounts.entity.MetaOAuthAccount;
-import com.aigreentick.services.wabaaccounts.entity.WabaAccount;
-import com.aigreentick.services.wabaaccounts.exception.DuplicateWabaException;
 import com.aigreentick.services.wabaaccounts.exception.InvalidRequestException;
-import com.aigreentick.services.wabaaccounts.exception.MetaApiException;
-import com.aigreentick.services.wabaaccounts.repository.MetaOAuthAccountRepository;
 import com.aigreentick.services.wabaaccounts.repository.WabaAccountRepository;
-import com.aigreentick.services.wabaaccounts.security.TokenEncryptionService;
+import com.aigreentick.services.wabaaccounts.service.OnboardingModel.PersistedOnboardingData;
+import com.aigreentick.services.wabaaccounts.service.OnboardingModel.TokenResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -36,12 +29,11 @@ public class EmbeddedSignupService {
     private final MetaApiClient metaApiClient;
     private final MetaApiRetryExecutor metaRetry;
     private final MetaApiConfig metaApiConfig;
-    private final MetaOAuthAccountRepository oauthAccountRepository;
     private final WabaAccountRepository wabaAccountRepository;
     private final PhoneNumberService phoneNumberService;
     private final PhoneRegistrationService phoneRegistrationService;
     private final SystemUserProvisioningService systemUserProvisioningService;
-    private final TokenEncryptionService tokenEncryptionService;
+    private final OnboardingPersistenceService onboardingPersistenceService; // ← replaces old inline logic
 
     private static final List<String> REQUIRED_SCOPES = List.of(
             "whatsapp_business_management",
@@ -93,11 +85,11 @@ public class EmbeddedSignupService {
         // Step F: Resolve phone number ID
         String resolvedPhoneNumberId = resolvePhoneNumberId(request, wabaId, tokenResult.accessToken());
 
-        // Step G: DB writes (tight transaction)
-        PersistedOnboardingData saved = persistOnboardingData(
+        // Step G: DB writes via dedicated transactional service bean
+        PersistedOnboardingData saved = onboardingPersistenceService.persistOnboardingData(
                 request, tokenResult, wabaId, businessManagerId);
 
-        // Steps G2-J: Best-effort external calls (OUTSIDE transaction)
+        // Steps G2–J: Best-effort external calls (OUTSIDE transaction)
 
         // Step G2: Webhook subscribe
         boolean webhookOk = subscribeAndVerifyWebhook(wabaId, tokenResult.accessToken());
@@ -129,7 +121,7 @@ public class EmbeddedSignupService {
             phoneRegistrationService.initiateSmbSync(resolvedPhoneNumberId, tokenResult.accessToken());
         }
 
-        // Step J: Phase 2
+        // Step J: Phase 2 provisioning
         boolean phase2Ok = systemUserProvisioningService.tryProvisionAfterSignup(request.getOrganizationId());
         if (phase2Ok) {
             log.info("Phase 2 complete: orgId={}", request.getOrganizationId());
@@ -202,7 +194,7 @@ public class EmbeddedSignupService {
             return new TokenResult(longToken, expiresIn, true);
         } catch (InvalidRequestException ex) {
             throw ex;
-        } catch (MetaApiException ex) {
+        } catch (Exception ex) {
             throw new InvalidRequestException("Failed to extend token: " + ex.getMessage());
         }
     }
@@ -278,7 +270,8 @@ public class EmbeddedSignupService {
                 () -> metaApiClient.getBusinessAccounts(accessToken));
 
         if (!response.isOk()) {
-            throw new InvalidRequestException("Could not fetch business accounts: " + response.getErrorMessage());
+            throw new InvalidRequestException(
+                    "Could not fetch business accounts: " + response.getErrorMessage());
         }
 
         List<Map<String, Object>> businesses = response.getDataAsList();
@@ -330,7 +323,7 @@ public class EmbeddedSignupService {
     }
 
     // ═══════════════════════════════════════════════════════════
-    // STEP F: Phone Number ID (Coexistence)
+    // STEP F: Phone Number ID
     // ═══════════════════════════════════════════════════════════
 
     private String resolvePhoneNumberId(EmbeddedSignupCallbackRequest request,
@@ -353,55 +346,6 @@ public class EmbeddedSignupService {
                 discovered.phoneNumberId(), discovered.displayPhoneNumber());
         return discovered.phoneNumberId();
     }
-
-    // ═══════════════════════════════════════════════════════════
-    // STEP G: DB Transaction — pure writes, no external I/O
-    // ═══════════════════════════════════════════════════════════
-
-    @Transactional
-    public PersistedOnboardingData persistOnboardingData(
-            EmbeddedSignupCallbackRequest request,
-            TokenResult tokenResult,
-            String wabaId,
-            String businessManagerId) {
-
-        // Global uniqueness
-        if (wabaAccountRepository.existsByWabaId(wabaId)) {
-            if (wabaAccountRepository.existsByOrganizationIdAndWabaId(request.getOrganizationId(), wabaId)) {
-                throw DuplicateWabaException.forOrganization(request.getOrganizationId(), wabaId);
-            }
-            log.error("Cross-tenant WABA conflict: wabaId={} requested by orgId={}",
-                    wabaId, request.getOrganizationId());
-            throw new DuplicateWabaException(
-                    "This WhatsApp Business Account is already connected to another account.");
-        }
-
-        String encryptedToken = tokenEncryptionService.encrypt(tokenResult.accessToken());
-        MetaOAuthAccount oauthAccount = saveOAuthAccount(
-                request.getOrganizationId(), encryptedToken, tokenResult.expiresIn());
-
-        WabaAccount waba;
-        try {
-            waba = WabaAccount.builder()
-                    .organizationId(request.getOrganizationId())
-                    .metaOAuthAccountId(oauthAccount.getId())
-                    .wabaId(wabaId)
-                    .businessManagerId(businessManagerId)   // FIX 5: now stored
-                    .status(WabaStatus.ACTIVE)
-                    .build();
-            waba = wabaAccountRepository.save(waba);
-        } catch (DataIntegrityViolationException ex) {
-            log.warn("Race condition on WABA insert: wabaId={}", wabaId);
-            throw new DuplicateWabaException("This WABA was just connected by another request.");
-        }
-
-        log.info("Onboarding data persisted: wabaAccountId={}, orgId={}, businessManagerId={}",
-                waba.getId(), request.getOrganizationId(), businessManagerId);
-
-        return new PersistedOnboardingData(waba, oauthAccount);
-    }
-
-    record PersistedOnboardingData(WabaAccount waba, MetaOAuthAccount oauthAccount) {}
 
     // ═══════════════════════════════════════════════════════════
     // WEBHOOK
@@ -455,25 +399,6 @@ public class EmbeddedSignupService {
     // HELPERS
     // ═══════════════════════════════════════════════════════════
 
-    private MetaOAuthAccount saveOAuthAccount(Long organizationId,
-                                              String encryptedToken,
-                                              long expiresInSeconds) {
-        return oauthAccountRepository.findByOrganizationId(organizationId)
-                .map(existing -> {
-                    existing.setAccessToken(encryptedToken);
-                    existing.setExpiresAt(expiresInSeconds > 0
-                            ? LocalDateTime.now().plusSeconds(expiresInSeconds) : null);
-                    return oauthAccountRepository.save(existing);
-                })
-                .orElseGet(() -> oauthAccountRepository.save(
-                        MetaOAuthAccount.builder()
-                                .organizationId(organizationId)
-                                .accessToken(encryptedToken)
-                                .expiresAt(expiresInSeconds > 0
-                                        ? LocalDateTime.now().plusSeconds(expiresInSeconds) : null)
-                                .build()));
-    }
-
     private String buildExtrasJson() {
         return "{\"feature\": \"whatsapp_embedded_signup\", \"version\": 2, \"sessionInfoVersion\": \"3\"}";
     }
@@ -498,6 +423,4 @@ public class EmbeddedSignupService {
                 .findByOrganizationIdAndStatus(organizationId, WabaStatus.ACTIVE)
                 .isEmpty();
     }
-
-    record TokenResult(String accessToken, long expiresIn, boolean isLongLived) {}
 }

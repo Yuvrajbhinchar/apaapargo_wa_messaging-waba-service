@@ -131,7 +131,7 @@ public class MetaApiClient {
         MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
         body.add("access_token", accessToken);
         // FIX 1: subscribed_fields is REQUIRED — without it Meta ignores the subscription
-        body.add("subscribed_fields", "[\"messages\"]");
+        body.add("subscribed_fields", "messages");
         return post(url, body, null);
     }
 
