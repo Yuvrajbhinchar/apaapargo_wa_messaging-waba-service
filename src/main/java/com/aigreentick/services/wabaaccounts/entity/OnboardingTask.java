@@ -14,8 +14,9 @@ import java.time.LocalDateTime;
                 @UniqueConstraint(name = "uq_onboarding_idempotency", columnNames = "idempotency_key")
         },
         indexes = {
-                @Index(name = "idx_onboarding_org", columnList = "organization_id"),
-                @Index(name = "idx_onboarding_status", columnList = "status"),
+                @Index(name = "idx_onboarding_org",        columnList = "organization_id"),
+                @Index(name = "idx_onboarding_status",     columnList = "status"),
+                @Index(name = "idx_onboarding_org_status", columnList = "organization_id, status"),
         }
 )
 @Getter
@@ -24,6 +25,20 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @Builder
 public class OnboardingTask {
+
+    /**
+     * How long a PROCESSING task must be running before it is considered
+     * stuck and eligible for customer-initiated cancellation.
+     *
+     * 10 minutes covers:
+     *   - Normal flow: 8–12s peak. Stuck tasks are obvious long before 10m.
+     *   - Meta API hanging: WebClient has a 30s timeout, so 10m is safe margin.
+     *   - Deployment restart: Spring waits 60s for tasks on shutdown; if it was
+     *     killed hard, the task is stuck immediately. 10m gives the scheduler
+     *     time to reset it first (resetStuckTasks() runs every 5m). Only if
+     *     the scheduler also fails does the customer need self-service.
+     */
+    public static final int STUCK_PROCESSING_MINUTES = 10;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -41,19 +56,9 @@ public class OnboardingTask {
     @Column(name = "business_manager_id", length = 100)
     private String businessManagerId;
 
-    /**
-     * FIX 4: Phone number ID from Meta SDK — needed for retry.
-     * Without this, coexistence retry loses the phone context and
-     * re-discovers a potentially different number.
-     */
     @Column(name = "phone_number_id", length = 100)
     private String phoneNumberId;
 
-    /**
-     * FIX 4: Signup type from Meta SDK (e.g. "APP_ONBOARDING").
-     * Without this, retry doesn't know whether to run coexistence flow
-     * (SMB sync) or normal flow → coexistence retry silently skips sync.
-     */
     @Column(name = "signup_type", length = 50)
     private String signupType;
 
@@ -92,9 +97,26 @@ public class OnboardingTask {
     @Column(name = "finished_at")
     private LocalDateTime finishedAt;
 
+    // ════════════════════════════════════════════════════════════
+    // STATUS ENUM
+    // ════════════════════════════════════════════════════════════
+
     public enum Status {
-        PENDING, PROCESSING, COMPLETED, FAILED
+        PENDING,
+        PROCESSING,
+        COMPLETED,
+        FAILED,
+        /**
+         * Customer dismissed this failed (or stuck) task and will restart
+         * the signup flow. A new task is created for the new OAuth code.
+         * CANCELLED tasks are never auto-retried by the scheduler.
+         */
+        CANCELLED
     }
+
+    // ════════════════════════════════════════════════════════════
+    // STATE TRANSITIONS
+    // ════════════════════════════════════════════════════════════
 
     public void markProcessing() {
         this.status = Status.PROCESSING;
@@ -115,12 +137,79 @@ public class OnboardingTask {
         this.retryCount++;
     }
 
+    public void markCancelled(String reason) {
+        this.status = Status.CANCELLED;
+        this.errorMessage = "Cancelled: " + reason;
+        this.finishedAt = LocalDateTime.now();
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // STATE QUERIES
+    // ════════════════════════════════════════════════════════════
+
+    /**
+     * EDGE CASE 1 FIX: PROCESSING tasks older than STUCK_PROCESSING_MINUTES
+     * are cancellable, not just FAILED.
+     *
+     * Without this, a stuck PROCESSING task leaves the customer with no
+     * self-service exit. The scheduler resets truly stuck tasks automatically,
+     * but if the scheduler itself has issues, the customer needs a way out.
+     *
+     * Decision table:
+     *   PENDING           → false  (just wait, it hasn't started yet)
+     *   PROCESSING fresh  → false  (worker is running, do not interrupt)
+     *   PROCESSING stuck  → true   (older than threshold, safe to cancel)
+     *   FAILED            → true   (always cancellable)
+     *   COMPLETED         → false  (terminal success, nothing to cancel)
+     *   CANCELLED         → false  (already done — idempotency handled separately)
+     */
+    public boolean isCancellable() {
+        if (status == Status.FAILED) return true;
+        if (status == Status.PROCESSING) return isStaleProcessing();
+        return false;
+    }
+
+    /**
+     * EDGE CASE 2 FIX: Already-cancelled tasks return true so the controller
+     * can treat them as an idempotent no-op rather than throwing an error.
+     *
+     * This is separate from isCancellable() to keep the semantics clean:
+     *   isCancellable()  = "can we transition to CANCELLED now?"
+     *   isAlreadyCancelled() = "is it already there?"
+     */
+    public boolean isAlreadyCancelled() {
+        return status == Status.CANCELLED;
+    }
+
+    /** True if PROCESSING for longer than STUCK_PROCESSING_MINUTES. */
+    public boolean isStaleProcessing() {
+        if (status != Status.PROCESSING || startedAt == null) return false;
+        return startedAt.plusMinutes(STUCK_PROCESSING_MINUTES).isBefore(LocalDateTime.now());
+    }
+
+    /** Used by the scheduler's resetStuckTasks() — same threshold. */
+    public boolean isStuck() {
+        return isStaleProcessing();
+    }
+
+    /** Only FAILED tasks with retryCount < 3 are eligible for automatic retry. */
     public boolean isRetryable() {
         return status == Status.FAILED && retryCount < 3;
     }
 
-    public boolean isStuck() {
-        if (status != Status.PROCESSING || startedAt == null) return false;
-        return startedAt.plusMinutes(5).isBefore(LocalDateTime.now());
+    /**
+     * EDGE CASE 3 FIX: "Active" means a worker is running or will run.
+     * FAILED requires user action first — it is NOT active.
+     *
+     * Used by findActiveTasksForOrg() to decide what the frontend should poll.
+     *
+     *   PENDING     → active (queued, worker will pick it up)
+     *   PROCESSING  → active (worker is running)
+     *   FAILED      → NOT active (needs user action: cancel + restart)
+     *   CANCELLED   → NOT active (terminal)
+     *   COMPLETED   → NOT active (terminal)
+     */
+    public boolean isActive() {
+        return status == Status.PENDING || status == Status.PROCESSING;
     }
 }

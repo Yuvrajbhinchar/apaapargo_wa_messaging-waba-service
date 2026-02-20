@@ -12,73 +12,24 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
-/**
- * ══════════════════════════════════════════════════════════════════
- * Onboarding Orchestrator — Task Coordination
- * ══════════════════════════════════════════════════════════════════
- *
- * ═══════════════════════════════════════════════════════════════════
- * BLOCKER 3 FIX: Spring AOP Self-Invocation
- * ═══════════════════════════════════════════════════════════════════
- *
- * PROBLEM:
- *   enqueue() called this.processTaskAsync() — self-invocation.
- *   Spring @Async proxy is bypassed on self-calls. Method ran
- *   synchronously on the HTTP thread, blocking it for 8-12 seconds.
- *   Under load, this exhausted the Tomcat thread pool.
- *
- *   Same issue: retryFailedTasks() called this::retryTask — also self-invocation.
- *
- * FIX:
- *   1. ALL @Async methods REMOVED from this class entirely.
- *   2. @Async lives ONLY in OnboardingAsyncDispatcher (separate bean).
- *   3. enqueue() calls dispatcher.dispatch() — cross-bean call → proxy honoured.
- *   4. retryFailedTasks() calls dispatcher.redispatch() — cross-bean → proxy honoured.
- *
- * HOW TO VERIFY THE FIX:
- *   After a signup, check logs. You MUST see:
- *     "Onboarding task picked up on thread [waba-onboarding-1]"
- *   If you see "http-nio-8081-exec-*" — self-invocation is back.
- *
- * DEPENDENCY GRAPH (no cycles):
- *   OnboardingOrchestrator ──────────────► OnboardingAsyncDispatcher
- *          │                                        │
- *          └──────────► OnboardingTaskStateService ◄┘
- */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class OnboardingOrchestrator {
 
     private final OnboardingTaskRepository taskRepository;
-    private final OnboardingAsyncDispatcher dispatcher;           // ← BLOCKER 3 FIX
+    private final OnboardingAsyncDispatcher dispatcher;
     private final OnboardingTaskStateService taskStateService;
 
     // ════════════════════════════════════════════════════════════
-    // ENQUEUE — accepts callback, persists task, dispatches async
+    // ENQUEUE
     // ════════════════════════════════════════════════════════════
 
-    /**
-     * Create an onboarding task and dispatch it to the background thread pool.
-     *
-     * Returns the task ID in < 100ms. Actual processing happens on the
-     * onboardingTaskExecutor thread pool via OnboardingAsyncDispatcher.
-     *
-     * ═══ BLOCKER 3 FIX ═══
-     * OLD BROKEN:
-     *   processTaskAsync(task.getId(), request);  // ← this.method() = self-invocation
-     *   // @Async silently ignored, ran on HTTP thread for 8-12 seconds
-     *
-     * NEW FIXED:
-     *   dispatcher.dispatch(task.getId(), request);  // ← cross-bean call
-     *   // Spring proxy intercepts, @Async honoured, HTTP thread returns immediately
-     */
     @Transactional
     public Long enqueue(EmbeddedSignupCallbackRequest request) {
         String idempotencyKey = request.getOrganizationId() + ":" + request.getCode();
 
-        Optional<OnboardingTask> existing =
-                taskRepository.findByIdempotencyKey(idempotencyKey);
+        Optional<OnboardingTask> existing = taskRepository.findByIdempotencyKey(idempotencyKey);
         if (existing.isPresent()) {
             log.info("Duplicate embedded signup callback. Returning existing taskId={}",
                     existing.get().getId());
@@ -91,7 +42,6 @@ public class OnboardingOrchestrator {
                     .oauthCode(request.getCode())
                     .wabaId(request.getWabaId())
                     .businessManagerId(request.getBusinessManagerId())
-                    // FIX 4: persist retry context — without these, retry loses coexistence state
                     .phoneNumberId(request.getPhoneNumberId())
                     .signupType(request.getSignupType())
                     .status(OnboardingTask.Status.PENDING)
@@ -115,7 +65,7 @@ public class OnboardingOrchestrator {
     }
 
     // ════════════════════════════════════════════════════════════
-    // TASK QUERY
+    // QUERY
     // ════════════════════════════════════════════════════════════
 
     @Transactional(readOnly = true)
@@ -125,14 +75,59 @@ public class OnboardingOrchestrator {
                         "Onboarding task not found: " + taskId));
     }
 
+    /**
+     * EDGE CASE 3: Returns only PENDING / PROCESSING tasks.
+     * FAILED is not active — it requires user action.
+     */
+    @Transactional(readOnly = true)
+    public Optional<OnboardingTask> findActiveTaskForOrg(Long organizationId) {
+        List<OnboardingTask> tasks = taskRepository.findActiveTasksForOrg(organizationId);
+        return tasks.isEmpty() ? Optional.empty() : Optional.of(tasks.get(0));
+    }
+
+    /**
+     * EDGE CASE 3: Surface last FAILED task for an org.
+     * Used by the frontend after a page refresh when there is no active task,
+     * to show the user whether their last attempt failed and what to do.
+     */
+    @Transactional(readOnly = true)
+    public Optional<OnboardingTask> findLastFailedTaskForOrg(Long organizationId) {
+        List<OnboardingTask> tasks = taskRepository.findFailedTasksForOrg(organizationId);
+        return tasks.isEmpty() ? Optional.empty() : Optional.of(tasks.get(0));
+    }
+
     // ════════════════════════════════════════════════════════════
-    // STUCK TASK RECOVERY — called by TokenMaintenanceScheduler
+    // CANCEL
     // ════════════════════════════════════════════════════════════
 
+    /**
+     * Cancel a task. Ownership-checked here; state machine enforced in state service.
+     *
+     * EDGE CASE 1: stale PROCESSING tasks are now cancellable (via isCancellable()).
+     * EDGE CASE 2: already-CANCELLED tasks return without error (idempotent via state service).
+     */
+    @Transactional
+    public OnboardingTask cancelTask(Long taskId, Long organizationId, String reason) {
+        OnboardingTask task = taskRepository.findById(taskId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Onboarding task not found: " + taskId));
+
+        if (!task.getOrganizationId().equals(organizationId)) {
+            throw new SecurityException(
+                    "Task " + taskId + " does not belong to organization " + organizationId);
+        }
+
+        return taskStateService.markCancelled(taskId, reason);
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // STUCK TASK RECOVERY (scheduler)
+    // ════════════════════════════════════════════════════════════
 
     @Transactional
     public int resetStuckTasks() {
-        LocalDateTime stuckThreshold = LocalDateTime.now().minusMinutes(10);
+        LocalDateTime stuckThreshold = LocalDateTime.now().minusMinutes(
+                OnboardingTask.STUCK_PROCESSING_MINUTES);
         List<OnboardingTask> stuckTasks = taskRepository.findStuckTasks(stuckThreshold);
         stuckTasks.forEach(task -> {
             log.warn("Resetting stuck task: taskId={}, stuckSince={}",
@@ -145,19 +140,9 @@ public class OnboardingOrchestrator {
     }
 
     // ════════════════════════════════════════════════════════════
-    // FAILED TASK RETRY — called by TokenMaintenanceScheduler
+    // FAILED TASK RETRY (scheduler)
     // ════════════════════════════════════════════════════════════
 
-    /**
-     * Re-queue FAILED onboarding tasks that have retried fewer than 3 times.
-     *
-     * ═══ BLOCKER 3 FIX ═══
-     * OLD BROKEN:
-     *   retryable.forEach(this::retryTask);  // self-invocation, @Async ignored
-     *
-     * NEW FIXED:
-     *   retryable.forEach(dispatcher::redispatch);  // cross-bean, @Async honoured
-     */
     @Transactional
     public int retryFailedTasks() {
         List<OnboardingTask> retryable = taskRepository.findRetryableFailures();
@@ -165,10 +150,4 @@ public class OnboardingOrchestrator {
         log.info("Queued {} retryable onboarding tasks", retryable.size());
         return retryable.size();
     }
-
-    // ════════════════════════════════════════════════════════════
-    // REMOVED — processTaskAsync() and retryTask() deleted.
-    // @Async methods now live ONLY in OnboardingAsyncDispatcher.
-    // This eliminates the self-invocation bug permanently.
-    // ════════════════════════════════════════════════════════════
 }
