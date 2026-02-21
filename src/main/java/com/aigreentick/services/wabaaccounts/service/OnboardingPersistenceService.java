@@ -7,7 +7,7 @@ import com.aigreentick.services.wabaaccounts.entity.WabaAccount;
 import com.aigreentick.services.wabaaccounts.exception.DuplicateWabaException;
 import com.aigreentick.services.wabaaccounts.repository.MetaOAuthAccountRepository;
 import com.aigreentick.services.wabaaccounts.repository.WabaAccountRepository;
-import com.aigreentick.services.wabaaccounts.security.TokenEncryptionService;
+import com.aigreentick.services.wabaaccounts.service.TokenEncryptionService;
 import com.aigreentick.services.wabaaccounts.service.OnboardingModel.PersistedOnboardingData;
 import com.aigreentick.services.wabaaccounts.service.OnboardingModel.TokenResult;
 import lombok.RequiredArgsConstructor;

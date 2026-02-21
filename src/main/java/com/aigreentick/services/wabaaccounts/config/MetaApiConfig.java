@@ -17,7 +17,7 @@ public class MetaApiConfig {
     private String embeddedSignupConfigId;
 
     /**
-     * FIX 2: Separate version for webhook subscribe + phone register.
+     * Separate version for webhook subscribe + phone register.
      * Meta requires v18.0 for these two endpoints.
      * Bound from: meta.phone-registration-api-version
      */
@@ -32,7 +32,7 @@ public class MetaApiConfig {
     }
 
     /**
-     * FIX 2: Version-specific URL builder.
+     * Version-specific URL builder.
      * Use for endpoints that require a different Graph API version.
      */
     public String getVersionedBaseUrl(String version) {

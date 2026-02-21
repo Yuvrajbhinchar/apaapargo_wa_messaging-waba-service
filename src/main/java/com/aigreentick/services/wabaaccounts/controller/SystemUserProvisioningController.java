@@ -8,32 +8,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-/**
- * ══════════════════════════════════════════════════════════════════
- * Phase 2 — System User Provisioning API
- * ══════════════════════════════════════════════════════════════════
- *
- * These endpoints allow manual triggering of Phase 2 provisioning.
- * Phase 2 normally runs automatically after embedded signup, but can
- * fail if the Business Manager permissions aren't set up yet.
- *
- * Use this API to:
- *   1. Retry provisioning for orgs that failed auto-provisioning
- *   2. Migrate existing orgs that were onboarded before Phase 2
- *   3. Force re-provision (e.g. after revoking old system user)
- *   4. Check the provisioning status of an org
- *
- * AUTHENTICATION
- * ──────────────
- * These endpoints must be protected by your internal auth layer.
- * They should only be accessible to:
- *   - Your internal admin dashboard
- *   - Backend jobs / schedulers
- *   - NOT exposed to customers directly
- *
- * Add your auth interceptor or Spring Security rule to protect
- * the /api/v1/system-users/** path.
- */
 @RestController
 @RequestMapping("/api/v1/system-users")
 @RequiredArgsConstructor

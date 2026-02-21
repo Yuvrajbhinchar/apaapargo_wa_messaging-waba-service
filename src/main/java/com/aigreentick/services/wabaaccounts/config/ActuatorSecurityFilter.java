@@ -13,27 +13,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 
-/**
- * FIX: Actuator Security ❌
- *
- * Problem: All actuator endpoints (/actuator/health, /actuator/prometheus, etc.)
- * were publicly accessible on the main port 8081. Anyone could read:
- *  - Circuit breaker states
- *  - Prometheus metrics (exposes service internals)
- *  - Environment info
- *
- * Solution:
- * 1. application.yaml moves actuator to management.server.port=8082
- * 2. This filter blocks any /actuator requests reaching port 8081 as a defense-in-depth measure
- *    (in case management.server.port config doesn't take effect, e.g. in tests)
- *
- * In your infrastructure:
- *   - Port 8081 → Public / API Gateway / Load Balancer
- *   - Port 8082 → Internal only / VPC / monitoring subnet
- *
- * If you WANT to expose /health on port 8081 for your load balancer health checks:
- * Change the isBlockedActuatorPath() method to only block non-health paths.
- */
+
 @Component
 @Order(1)
 @Slf4j

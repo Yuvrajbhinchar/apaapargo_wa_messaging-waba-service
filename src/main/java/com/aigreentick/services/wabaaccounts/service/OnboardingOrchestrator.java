@@ -78,7 +78,7 @@ public class OnboardingOrchestrator {
     }
 
     /**
-     * EDGE CASE 3: Returns only PENDING / PROCESSING tasks.
+     * Returns only PENDING / PROCESSING tasks.
      * FAILED is not active — it requires user action.
      */
     @Transactional(readOnly = true)
@@ -88,7 +88,7 @@ public class OnboardingOrchestrator {
     }
 
     /**
-     * EDGE CASE 3: Surface last FAILED task for an org.
+     * Surface last FAILED task for an org.
      * Used by the frontend after a page refresh when there is no active task,
      * to show the user whether their last attempt failed and what to do.
      */
@@ -126,22 +126,6 @@ public class OnboardingOrchestrator {
     // STUCK TASK RECOVERY (scheduler)
     // ════════════════════════════════════════════════════════════
 
-    /**
-     * Retry failed onboarding tasks — fully atomic.
-     *
-     * GAP 4 FIX:
-     * Old code did read-then-write (findRetryableFailures → setStatus → save).
-     * Two scheduler instances running simultaneously could both read the same
-     * FAILED task and both reset it to PENDING → duplicate redispatch calls.
-     *
-     * The tryClaimTask() in dispatch() would prevent duplicate EXECUTION,
-     * but duplicate dispatches waste thread pool capacity and create
-     * confusing log noise.
-     *
-     * Fix: Use atomic CAS query (claimTaskForRetry) that transitions
-     * FAILED → PENDING only if the task is still FAILED. Second scheduler
-     * instance sees the task as PENDING → claimTaskForRetry returns 0.
-     */
     @Transactional
     public int retryFailedTasks() {
         // Step 1: Find candidates (read-only, no state change)
@@ -181,10 +165,7 @@ public class OnboardingOrchestrator {
         return retried;
     }
 
-    /**
-     * Reset stuck tasks — also atomic per GAP 4 principle.
-     * (Already fixed in previous artifact, included here for completeness)
-     */
+
     @Transactional
     public int resetStuckTasks() {
         LocalDateTime stuckThreshold = LocalDateTime.now().minusMinutes(

@@ -6,12 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * FIX: Fail-fast validation for required Meta API configuration.
- *
- * Problem: Without this, the service starts successfully even if META_APP_ID
- * or META_APP_SECRET are not set. The first real Meta API call then fails
- * with a cryptic "Invalid Client ID" error — hard to diagnose in production.
- *
+ * Fail-fast validation for required Meta API configuration.
  * Solution: Validate at startup. If any required config is missing or is still
  * the placeholder value, the application context will fail to load with a
  * clear, actionable error message.

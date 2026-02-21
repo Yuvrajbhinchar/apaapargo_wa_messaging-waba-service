@@ -8,62 +8,6 @@ import org.springframework.stereotype.Component;
 
 import java.util.function.Supplier;
 
-/**
- * ══════════════════════════════════════════════════════════════════
- * Meta API Retry Executor — Exponential Backoff
- * ══════════════════════════════════════════════════════════════════
- *
- * WHY THIS EXISTS (Senior Gap 5)
- * ────────────────────────────────
- * Meta API calls were single-shot:
- *   - One timeout → onboarding failure
- *   - One 5xx → onboarding failure
- *   - One rate limit → onboarding failure
- *
- * Meta's APIs are reliable but NOT 100%.
- * At BSP scale (thousands of signups/day), transient failures WILL happen.
- *
- * This wrapper adds:
- *   1. Exponential backoff retry (transient errors)
- *   2. Transient vs permanent error classification
- *   3. Rate limit detection + longer wait
- *   4. Max attempts guard (no infinite loops)
- *
- * RETRY STRATEGY
- * ────────────────
- * Attempt 1  → immediate
- * Attempt 2  → wait 1s (base delay)
- * Attempt 3  → wait 2s (1s * 2^1)
- * Attempt 4  → wait 4s (1s * 2^2)  [max 3 retries = 4 total attempts]
- *
- * For rate limits (HTTP 429):
- * Attempt 2+ → wait 5s (rate limit has a higher base delay)
- *
- * WHAT IS RETRYABLE
- * ─────────────────
- * ✅ Retryable (transient):
- *   - Meta 5xx errors (server-side issues)
- *   - Network timeouts / connection resets
- *   - HTTP 429 (rate limited — wait longer)
- *
- * ❌ Not retryable (permanent — would just fail again):
- *   - HTTP 400 (bad request, wrong params)
- *   - HTTP 190 (OAuthException — invalid/expired token)
- *   - HTTP 200 with error.type = "OAuthException"
- *   - HTTP 403 (permission denied)
- *
- * USAGE
- * ──────
- * Inject into service, then wrap calls:
- *
- *   metaRetry.execute("createSystemUser",
- *       () -> metaApiClient.createSystemUser(bizId, name, role, token));
- *
- * Or for specific step:
- *   MetaApiResponse response = metaRetry.executeWithContext(
- *       "assignWaba", wabaId,
- *       () -> metaApiClient.assignWabaToSystemUser(wabaId, systemUserId, token));
- */
 @Component
 @Slf4j
 public class MetaApiRetryExecutor {
@@ -81,26 +25,13 @@ public class MetaApiRetryExecutor {
             102   // Session key invalid / must be re-authenticated
     );
 
-    /**
-     * Execute a Meta API call with retry.
-     *
-     * @param operationName  Human-readable name for logging (e.g. "createSystemUser")
-     * @param apiCall        The API call to execute (lambda)
-     * @return               The successful MetaApiResponse
-     * @throws MetaApiException if all retries exhausted or a permanent error occurs
-     */
+
     @CircuitBreaker(name = "metaApi", fallbackMethod = "circuitBreakerFallback")
     public MetaApiResponse execute(String operationName, Supplier<MetaApiResponse> apiCall) {
         return executeInternal(operationName, null, apiCall);
     }
 
-    /**
-     * Execute with a resource ID for better log messages.
-     *
-     * @param operationName  Human-readable name (e.g. "assignWaba")
-     * @param resourceId     The WABA ID / business ID / system user ID being operated on
-     * @param apiCall        The API call to execute
-     */
+
     @CircuitBreaker(name = "metaApi", fallbackMethod = "circuitBreakerFallbackWithContext")
     public MetaApiResponse executeWithContext(String operationName,
                                               String resourceId,

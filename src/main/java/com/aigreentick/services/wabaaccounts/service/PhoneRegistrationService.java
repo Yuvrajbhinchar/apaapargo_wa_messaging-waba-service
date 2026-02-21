@@ -12,24 +12,6 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Phone Registration Service — automated registration during embedded signup.
- *
- * ─── v6 Fix: MetaApiResponse DTO mismatch ───────────────────────────────
- * FIX (BLOCKER 1): discoverLatestPhoneNumber now reads phone array correctly.
- *
- * GET /{wabaId}/phone_numbers returns: { "data": [ { "id": "...", ... } ] }
- * data is an ARRAY → use getDataAsList()
- *
- * OLD BROKEN:
- *   Object dataObj = response.getData().get("data");   // getData() = null → NPE
- *
- * NEW CORRECT:
- *   List<Map<String,Object>> numbers = response.getDataAsList();
- *
- * Other methods (registerPhoneNumber, initiateSmbSync) return { "success": true }
- * which isOk() already handles correctly — no change needed there.
- */
 @Service
 @RequiredArgsConstructor
 @Slf4j

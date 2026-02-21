@@ -10,7 +10,7 @@ import com.aigreentick.services.wabaaccounts.entity.WabaAccount;
 import com.aigreentick.services.wabaaccounts.exception.InvalidRequestException;
 import com.aigreentick.services.wabaaccounts.repository.MetaOAuthAccountRepository;
 import com.aigreentick.services.wabaaccounts.repository.WabaAccountRepository;
-import com.aigreentick.services.wabaaccounts.security.TokenEncryptionService;
+import com.aigreentick.services.wabaaccounts.service.TokenEncryptionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -21,21 +21,7 @@ import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.util.HexFormat;
 import java.util.List;
-import java.util.Map;
 
-/**
- * PHASE 2 — System User Provisioning
- *
- * ─── BLOCKER 1 FIX: generateSystemUserToken() ───────────────────────────
- * Meta's POST /{systemUserId}/access_tokens returns a FLAT response:
- *   { "access_token": "EAA...", "token_type": "bearer" }
- *
- * "access_token" lands in extras via @JsonAnySetter — NOT in data wrapper.
- * OLD BROKEN: response.getData().get("access_token") → getData() = null → NPE
- * NEW FIXED:  response.getFlatValue("access_token")  → checks extras first
- *
- * Same fix applied to resolveBusinessManagerId — business_id is also flat.
- */
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -209,27 +195,7 @@ public class SystemUserProvisioningService {
         }
     }
 
-    /**
-     * Step 3: Generate permanent token for system user.
-     *
-     * POST /{systemUserId}/access_tokens returns FLAT response:
-     *   { "access_token": "EAA...", "token_type": "bearer" }
-     *
-     * ════════════════════════════════════════════════════════════
-     * BLOCKER 1 FIX:
-     * ════════════════════════════════════════════════════════════
-     * OLD BROKEN CODE:
-     *   if (response.getData() == null) { throw ... }        ← getData() always null for flat
-     *   Object token = response.getData().get("access_token") ← NPE guaranteed
-     *
-     * NEW FIXED CODE:
-     *   Object token = response.getFlatValue("access_token")  ← checks extras first
-     *
-     * getFlatValue() checks extras (where flat fields land via @JsonAnySetter)
-     * then falls back to dataAsMap. This matches how exchangeCodeForToken and
-     * extendToLongLivedToken correctly read their flat responses.
-     * ════════════════════════════════════════════════════════════
-     */
+
     private String generateSystemUserToken(String systemUserId,
                                            String appSecretProof,
                                            String accessToken) {

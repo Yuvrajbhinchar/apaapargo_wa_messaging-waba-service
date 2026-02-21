@@ -18,18 +18,6 @@ public class OnboardingAsyncDispatcher {
     private final EmbeddedSignupService embeddedSignupService;
     private final OnboardingTaskStateService taskStateService;
 
-    /**
-     * Dispatch onboarding work to the background thread pool.
-     *
-     * CONCURRENCY FIX:
-     * tryClaimTask() is an atomic UPDATE ... WHERE status = 'PENDING'.
-     * If two threads dispatch the same taskId simultaneously, exactly
-     * ONE will get updated=1 (claimed), the other gets updated=0 (rejected).
-     * The rejected thread exits immediately — no duplicate work.
-     *
-     * This is the ONLY entry point for task execution. All paths
-     * (initial dispatch, scheduler retry, manual retry) flow through here.
-     */
     @Async("onboardingTaskExecutor")
     public void dispatch(Long taskId, EmbeddedSignupCallbackRequest request) {
         String threadName = Thread.currentThread().getName();
@@ -60,7 +48,7 @@ public class OnboardingAsyncDispatcher {
 
         } catch (TaskOwnershipLostException ex) {
             // ╔════════════════════════════════════════════════════════╗
-            // ║  GAP 2 FIX: Worker detected it lost ownership.       ║
+            // ║  Worker detected it lost ownership.       ║
             // ║  Task was cancelled/reset by user or scheduler.      ║
             // ║  Do NOT call markFailed — the task is already in     ║
             // ║  its intended state (CANCELLED, PENDING, etc).       ║

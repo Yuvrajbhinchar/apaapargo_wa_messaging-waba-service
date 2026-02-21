@@ -20,7 +20,7 @@ import com.aigreentick.services.wabaaccounts.mapper.WabaMapper;
 import com.aigreentick.services.wabaaccounts.repository.MetaOAuthAccountRepository;
 import com.aigreentick.services.wabaaccounts.repository.WabaAccountRepository;
 import com.aigreentick.services.wabaaccounts.repository.WabaPhoneNumberRepository;
-import com.aigreentick.services.wabaaccounts.security.TokenEncryptionService;
+import com.aigreentick.services.wabaaccounts.service.TokenEncryptionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -112,15 +112,7 @@ public class PhoneNumberService {
         return WabaMapper.toPhoneNumberResponse(phoneNumber);
     }
 
-    /**
-     * FIX 6: Changed findById(request.getPhoneNumberId()) → findByPhoneNumberId()
-     *
-     * request.getPhoneNumberId() returns a String (Meta's phone number ID like "109876543210987").
-     * JpaRepository.findById() expects the entity @Id type which is Long.
-     * Passing a String causes ClassCastException at runtime.
-     *
-     * findByPhoneNumberId(String) queries by the Meta phone_number_id column — correct.
-     */
+
     @Transactional
     public void requestVerificationCode(RequestVerificationCodeRequest request) {
         log.info("Requesting verification code: phoneNumberId={}, method={}",
@@ -144,7 +136,7 @@ public class PhoneNumberService {
     }
 
     /**
-     * FIX 6: Same fix — findByPhoneNumberId instead of findById
+     * findByPhoneNumberId instead of findById
      */
     @Transactional
     public PhoneNumberResponse verifyPhoneNumber(VerifyPhoneNumberRequest request) {

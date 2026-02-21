@@ -101,25 +101,11 @@ public class OnboardingTask {
     @Column(name = "finished_at")
     private LocalDateTime finishedAt;
 
-    /**
-     * Comma-separated list of completed step names.
-     * Example: "TOKEN_EXCHANGE,TOKEN_EXTENSION,SCOPE_VERIFICATION"
-     *
-     * Used to resume a saga from where it left off after crash/restart.
-     * Each step checks isStepCompleted() before running — idempotent.
-     */
+
     @Column(name = "completed_steps", columnDefinition = "TEXT")
     private String completedSteps;
 
-    /**
-     * Encrypted access token — persisted IMMEDIATELY after exchange.
-     * This closes the data-loss window between code consumption and
-     * Step G persistence.
-     *
-     * WHY NOT reuse MetaOAuthAccount?
-     * Because MetaOAuthAccount is created in Step G. If we crash before
-     * Step G, the token is lost. This field is the safety net.
-     */
+
     @Column(name = "encrypted_access_token", columnDefinition = "TEXT")
     private String encryptedAccessToken;
 
@@ -175,11 +161,6 @@ public class OnboardingTask {
         PROCESSING,
         COMPLETED,
         FAILED,
-        /**
-         * Customer dismissed this failed (or stuck) task and will restart
-         * the signup flow. A new task is created for the new OAuth code.
-         * CANCELLED tasks are never auto-retried by the scheduler.
-         */
         CANCELLED
     }
 

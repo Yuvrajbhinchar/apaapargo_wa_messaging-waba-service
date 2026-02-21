@@ -166,10 +166,8 @@ springdoc:
 logging:
   level:
     root: INFO
-    com.aigreentick.services.wabaaccounts: DEBUG
+    com.aigreentick.services.wabaaccounts: INFO
     org.springframework.web: INFO
     org.hibernate.SQL: WARN
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
-  file:
-    name: logs/waba-service.log

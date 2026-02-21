@@ -21,7 +21,6 @@ import java.util.Map;
  * Token Maintenance Scheduler
  * ══════════════════════════════════════════════════════════════════
  *
- * WHY THIS EXISTS
  * ───────────────
  * During BSP onboarding review, Meta will ask: "How do you monitor
  * token health?" The correct answer is a scheduled process that:
@@ -59,7 +58,7 @@ public class TokenMaintenanceScheduler {
     private final MetaOAuthAccountRepository metaOAuthAccountRepository;
     private final MetaApiClient metaApiClient;
     private final OnboardingOrchestrator orchestrator;
-    private final com.aigreentick.services.wabaaccounts.security.TokenEncryptionService tokenEncryptionService;
+    private final com.aigreentick.services.wabaaccounts.service.TokenEncryptionService tokenEncryptionService;
 
     /** Days before expiry to start warning */
     private static final int EXPIRY_WARN_DAYS = 7;

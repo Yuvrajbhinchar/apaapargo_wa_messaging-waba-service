@@ -117,10 +117,6 @@ public class MetaApiClient {
     }
 
     /**
-     * FIX 1: Added subscribed_fields=['messages'] — without this Meta silently
-     *        ignores the subscription and incoming messages NEVER arrive.
-     * FIX 2: Uses v18.0 — Meta requires this version for subscribe endpoint.
-     *
      * POST /{wabaId}/subscribed_apps
      */
     public MetaApiResponse subscribeWabaWebhook(String wabaId, String accessToken) {
@@ -144,7 +140,7 @@ public class MetaApiClient {
     // ═══════════════════════════════════════════════════════════
 
     /**
-     * FIX 2: Uses v18.0 — Meta requires this version for register endpoint.
+     Uses v18.0 — Meta requires this version for register endpoint.
      * POST /{phoneNumberId}/register
      */
     public MetaApiResponse registerPhoneNumber(String phoneNumberId,

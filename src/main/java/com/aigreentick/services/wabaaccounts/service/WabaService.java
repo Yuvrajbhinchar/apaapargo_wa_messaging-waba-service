@@ -12,7 +12,7 @@ import com.aigreentick.services.wabaaccounts.exception.WabaNotFoundException;
 import com.aigreentick.services.wabaaccounts.mapper.WabaMapper;
 import com.aigreentick.services.wabaaccounts.repository.MetaOAuthAccountRepository;
 import com.aigreentick.services.wabaaccounts.repository.WabaAccountRepository;
-import com.aigreentick.services.wabaaccounts.security.TokenEncryptionService;
+import com.aigreentick.services.wabaaccounts.service.TokenEncryptionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -24,27 +24,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.List;
 
-/**
- * Service for WABA Account lifecycle management.
- *
- * ═══════════════════════════════════════════════════════════════════
- * BLOCKER 2 FIX: syncPhoneNumbers() was sending encrypted token to Meta
- * ═══════════════════════════════════════════════════════════════════
- *
- * oauthAccount.getAccessToken() returns "ENC:..." (encrypted at rest).
- * This service previously passed that directly to Meta → 401 every time.
- *
- * FIX: Injected TokenEncryptionService, decrypt before all Meta API calls.
- *
- * ═══════════════════════════════════════════════════════════════════
- * ADDITIONAL FIX: saveOrUpdateOAuthAccount() now ENCRYPTS tokens
- * ═══════════════════════════════════════════════════════════════════
- *
- * The direct REST endpoint POST /api/v1/waba-accounts called
- * saveOrUpdateOAuthAccount() which stored request.getAccessToken() in
- * PLAINTEXT. EmbeddedSignupService correctly encrypts, but this path
- * did not. Now both paths encrypt consistently.
- */
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -145,18 +124,7 @@ public class WabaService {
         return WabaMapper.toWabaResponse(waba);
     }
 
-    /**
-     * Manual phone sync triggered via REST endpoint.
-     *
-     * ═══ BLOCKER 2 FIX ═══
-     * OLD BROKEN:
-     *   phoneNumberService.syncPhoneNumbersFromMeta(waba, oauthAccount.getAccessToken());
-     *   → oauthAccount.getAccessToken() returns "ENC:..." → Meta gets 401
-     *
-     * NEW FIXED:
-     *   String decryptedToken = tokenEncryptionService.decrypt(oauthAccount.getAccessToken());
-     *   phoneNumberService.syncPhoneNumbersFromMeta(waba, decryptedToken);
-     */
+
     @Transactional
     public WabaResponse syncPhoneNumbers(Long wabaId) {
         log.info("Manual phone sync triggered for wabaId={}", wabaId);
@@ -194,21 +162,7 @@ public class WabaService {
     // PRIVATE HELPERS
     // ========================
 
-    /**
-     * Save or update OAuth account for an organization.
-     *
-     * ═══ ADDITIONAL FIX: Token encryption on the direct REST path ═══
-     *
-     * The embedded signup flow (EmbeddedSignupService) encrypts tokens
-     * before saving. But the direct REST endpoint POST /api/v1/waba-accounts
-     * calls this method, which previously stored the access token in PLAINTEXT.
-     *
-     * OLD BROKEN:
-     *   existing.setAccessToken(request.getAccessToken());  // plaintext!
-     *
-     * NEW FIXED:
-     *   existing.setAccessToken(tokenEncryptionService.encrypt(request.getAccessToken()));
-     */
+
     private MetaOAuthAccount saveOrUpdateOAuthAccount(CreateWabaRequest request) {
         return metaOAuthRepository
                 .findByOrganizationId(request.getOrganizationId())

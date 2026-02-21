@@ -1,4 +1,4 @@
-package com.aigreentick.services.wabaaccounts.security;
+package com.aigreentick.services.wabaaccounts.service;
 
 import com.aigreentick.services.wabaaccounts.exception.InvalidRequestException;
 import lombok.extern.slf4j.Slf4j;
@@ -12,50 +12,7 @@ import javax.crypto.spec.SecretKeySpec;
 import java.security.SecureRandom;
 import java.util.Base64;
 
-/**
- * ══════════════════════════════════════════════════════════════════
- * Token Encryption Service — AES-256-GCM
- * ══════════════════════════════════════════════════════════════════
- *
- * WHY THIS EXISTS (Senior Gap 4)
- * ────────────────────────────────
- * Meta access tokens stored in DB were plaintext.
- * If the database is compromised → every customer's WABA is compromised.
- * Attacker could send messages, read conversations, disable phone numbers.
- *
- * BSP compliance requires:
- *   - Tokens encrypted at rest
- *   - Secrets never stored plaintext
- *   - Key separate from data (different env var from DB creds)
- *
- * ALGORITHM: AES-256-GCM
- * ─────────────────────────
- * Why AES-GCM over AES-CBC:
- *   - Authenticated encryption — detects tampering (no padding oracle attacks)
- *   - Each encryption uses a fresh random 12-byte IV (nonce)
- *   - IV is stored alongside ciphertext — no secret IV needed
- *
- * FORMAT STORED IN DB
- * ────────────────────
- * Base64( IV_bytes[12] + ciphertext_bytes ) — single string, self-contained
- * Prefix "ENC:" distinguishes encrypted values from legacy plaintext:
- *   ENC:dGhpcyBpcyBhIHRlc3Qgc3RyaW5n...
- *
- * The prefix also lets us transparently handle old plaintext tokens
- * already in the DB (backward compatible).
- *
- * KEY SETUP (required)
- * ──────────────────────
- * Add to environment:
- *   TOKEN_ENCRYPTION_KEY=<32-byte AES key as hex string>
- *
- * Generate a key:
- *   openssl rand -hex 32
- *
- * NEVER rotate the key without first decrypting all tokens.
- * If the key changes, all existing tokens become unreadable.
- * Key rotation strategy: decrypt with old key → re-encrypt with new key.
- */
+
 @Component
 @Slf4j
 public class TokenEncryptionService {

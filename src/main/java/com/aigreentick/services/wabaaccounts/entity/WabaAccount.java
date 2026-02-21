@@ -42,11 +42,6 @@ public class WabaAccount {
     @Column(name = "waba_id", nullable = false, length = 100)
     private String wabaId;
 
-    /**
-     * FIX 5: Business Manager ID — resolved during signup but previously
-     * never stored. Required for Phase 2 system user provisioning and
-     * for support/debugging (which BM owns this WABA).
-     */
     @Column(name = "business_manager_id", length = 100)
     private String businessManagerId;
 

@@ -14,7 +14,7 @@ import com.aigreentick.services.wabaaccounts.entity.OnboardingTask;
 import com.aigreentick.services.wabaaccounts.exception.InvalidRequestException;
 import com.aigreentick.services.wabaaccounts.exception.TaskOwnershipLostException;
 import com.aigreentick.services.wabaaccounts.repository.WabaAccountRepository;
-import com.aigreentick.services.wabaaccounts.security.TokenEncryptionService;
+import com.aigreentick.services.wabaaccounts.service.TokenEncryptionService;
 import com.aigreentick.services.wabaaccounts.service.OnboardingModel.PersistedOnboardingData;
 import com.aigreentick.services.wabaaccounts.service.OnboardingModel.TokenResult;
 import lombok.RequiredArgsConstructor;

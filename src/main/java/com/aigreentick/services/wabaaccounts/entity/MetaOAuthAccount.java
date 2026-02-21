@@ -7,34 +7,7 @@ import org.hibernate.annotations.CreationTimestamp;
 
 import java.time.LocalDateTime;
 
-/**
- * Entity representing a Meta (Facebook) OAuth account.
- *
- *
- * OLD model: Organization → MANY MetaOAuthAccounts (one per Business Manager)
- * Unique constraint: (organization_id, business_manager_id)
- *
- * Problem: A user access token is NOT tied to a Business Manager.
- * One token can access MULTIPLE Business Managers.
- * When a customer connects a second WABA from the same Meta login (different BM),
- * the old model created a second OAuth account row unnecessarily.
- * This caused:
- *   - Duplicate token storage
- *   - Token refresh needing to update multiple rows
- *   - User re-auth creating confusion about which token to use
- *
- * NEW model: Organization → ONE MetaOAuthAccount → MANY WABAs
- * Unique constraint: (organization_id) — one token per org
- *
- * businessManagerId is now stored on WabaAccount (the WABA level),
- * not on the OAuth account level. The token belongs to the org, not the BM.
- *
- * Migration: V3__fix_oauth_domain_model.sql
- *   - Drops old unique constraint on (organization_id, business_manager_id)
- *   - Adds new unique constraint on (organization_id)
- *   - Drops business_manager_id column (now stored elsewhere or derived)
- *   - Adds optional meta_user_id for audit/tracking
- */
+
 @Entity
 @Table(
         name = "meta_oauth_accounts",

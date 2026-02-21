@@ -10,25 +10,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
-/**
- * Repository for Meta OAuth Account operations.
- *
- * ─── Senior Review Fix (BLOCKER 2) — OAuth Domain Model ──────────────────
- *
- * Old identity key: (organizationId, businessManagerId)
- * New identity key: organizationId alone
- *
- * One organization = one MetaOAuthAccount = one token.
- * The token covers access to ALL Business Managers the user authorized.
- *
- * Removed:
- *   - findByOrganizationIdAndBusinessManagerId (BM is no longer the token identity)
- *   - existsByOrganizationIdAndBusinessManagerId
- *
- * Added:
- *   - findByOrganizationId (the new primary lookup — returns Optional, one per org)
- *   - existsByOrganizationId (for duplicate check in WabaService)
- */
+
 @Repository
 public interface MetaOAuthAccountRepository extends JpaRepository<MetaOAuthAccount, Long> {
 
