@@ -1,36 +1,15 @@
 package com.aigreentick.services.wabaaccounts.service;
 
+import com.aigreentick.services.wabaaccounts.constants.OnboardingStep;
 import com.aigreentick.services.wabaaccounts.dto.request.EmbeddedSignupCallbackRequest;
 import com.aigreentick.services.wabaaccounts.dto.response.EmbeddedSignupResponse;
 import com.aigreentick.services.wabaaccounts.entity.OnboardingTask;
+import com.aigreentick.services.wabaaccounts.exception.TaskOwnershipLostException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
-/**
- * ══════════════════════════════════════════════════════════════════
- * Onboarding Async Dispatcher
- * ══════════════════════════════════════════════════════════════════
- *
- * @Async lives HERE. OnboardingOrchestrator calls dispatcher.dispatch() —
- * a cross-bean call. Spring proxy intercepts it. @Async is honoured.
- * HTTP thread returns < 100ms with the task ID.
- *
- * ═══ OAuth Retry Safety ═══════════════════════════════════════════
- * Meta OAuth codes are SINGLE-USE. Once exchanged for a token in Step A
- * of processSignupCallback(), the code is consumed and cannot be reused.
- *
- * If the task previously reached PROCESSING state (startedAt != null),
- * the code was very likely consumed. Retrying will hit Meta with an
- * already-used code → "This authorization code has been used" error.
- *
- * Guard: redispatch() checks if the code was likely consumed.
- * If so, marks the task as permanently failed with a clear message
- * instead of wasting 3 retry attempts that are guaranteed to fail.
- *
- * The user must restart the embedded signup flow to get a fresh code.
- */
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -42,85 +21,112 @@ public class OnboardingAsyncDispatcher {
     /**
      * Dispatch onboarding work to the background thread pool.
      *
-     * Called by OnboardingOrchestrator — cross-bean call ensures
-     * the Spring proxy intercepts it and @Async is honoured.
+     * CONCURRENCY FIX:
+     * tryClaimTask() is an atomic UPDATE ... WHERE status = 'PENDING'.
+     * If two threads dispatch the same taskId simultaneously, exactly
+     * ONE will get updated=1 (claimed), the other gets updated=0 (rejected).
+     * The rejected thread exits immediately — no duplicate work.
      *
-     * HOW TO VERIFY THE FIX IS WORKING:
-     *   Check logs after a signup. You must see:
-     *     "Onboarding task picked up on thread [waba-onboarding-1]"
-     *   If you see "http-nio-8081-exec-*" — self-invocation is back.
+     * This is the ONLY entry point for task execution. All paths
+     * (initial dispatch, scheduler retry, manual retry) flow through here.
      */
-
     @Async("onboardingTaskExecutor")
     public void dispatch(Long taskId, EmbeddedSignupCallbackRequest request) {
-        log.info("Onboarding task picked up on thread [{}]: taskId={}",
-                Thread.currentThread().getName(), taskId);
+        String threadName = Thread.currentThread().getName();
 
-        taskStateService.markProcessing(taskId);
+        boolean claimed = taskStateService.tryClaimTask(taskId);
+        if (!claimed) {
+            log.info("Task {} already claimed — thread [{}] exiting", taskId, threadName);
+            return;
+        }
+
+        log.info("Task {} claimed by thread [{}]", taskId, threadName);
 
         try {
-            EmbeddedSignupResponse result = embeddedSignupService.processSignupCallback(request,taskId);
-            taskStateService.markCompleted(taskId, result.getWabaAccountId(), result.getSummary());
-            log.info("Onboarding task COMPLETED: taskId={}, wabaAccountId={}",
-                    taskId, result.getWabaAccountId());
+            EmbeddedSignupResponse result =
+                    embeddedSignupService.processSignupCallback(request, taskId);
+
+            boolean committed = taskStateService.markCompleted(
+                    taskId, result.getWabaAccountId(), result.getSummary());
+
+            if (committed) {
+                log.info("Task {} COMPLETED: wabaAccountId={}", taskId, result.getWabaAccountId());
+            } else {
+                log.warn("Task {} completed but CAS rejected — " +
+                                "task already in terminal state (likely user cancelled). " +
+                                "WABA {} was created successfully.",
+                        taskId, result.getWabaAccountId());
+            }
+
+        } catch (TaskOwnershipLostException ex) {
+            // ╔════════════════════════════════════════════════════════╗
+            // ║  GAP 2 FIX: Worker detected it lost ownership.       ║
+            // ║  Task was cancelled/reset by user or scheduler.      ║
+            // ║  Do NOT call markFailed — the task is already in     ║
+            // ║  its intended state (CANCELLED, PENDING, etc).       ║
+            // ╚════════════════════════════════════════════════════════╝
+            log.info("Task {} — worker aborting: ownership lost (status={}). " +
+                            "Task was cancelled or reset externally.",
+                    ex.getTaskId(), ex.getDetectedStatus());
+            // Intentionally no markFailed() — respect the external state change
+
         } catch (Exception ex) {
-            taskStateService.markFailed(taskId, ex.getMessage());
-            log.error("Onboarding task FAILED: taskId={}, error={}", taskId, ex.getMessage(), ex);
+            boolean committed = taskStateService.markFailed(taskId, ex.getMessage());
+            if (committed) {
+                log.error("Task {} FAILED: {}", taskId, ex.getMessage(), ex);
+            } else {
+                // Task already COMPLETED by another path — that's fine
+                log.warn("Task {} exception but failure CAS rejected — " +
+                                "task already completed or cancelled. Error was: {}",
+                        taskId, ex.getMessage());
+            }
         }
     }
-
     /**
      * Re-dispatch a failed task for retry.
      *
-     * ═══ OAuth Retry Safety Guard ═══
+     * The task must be in PENDING state (reset by the scheduler) before
+     * this is called. The tryClaimTask() inside dispatch() ensures only
+     * one thread processes it.
      *
-     * OAuth codes are single-use. If this task previously reached PROCESSING
-     * (startedAt != null), then dispatch() was called before, which called
-     * processSignupCallback() → exchangeCodeForToken(). Even if the
-     * subsequent steps failed, the code is already consumed by Meta.
-     *
-     * Retrying with the same code is GUARANTEED to fail:
-     *   Meta returns: "This authorization code has been used"
-     *
-     * Instead of wasting 3 retry attempts on a dead code, we immediately
-     * mark the task as permanently failed with a clear message telling
-     * the customer to restart the signup flow.
-     *
-     * When IS a retry useful?
-     *   - Task failed BEFORE reaching PROCESSING (e.g., DB error on save)
-     *     → startedAt is null → code was never sent to Meta → retry is safe
+     * KEY CHANGE: We no longer refuse retry when startedAt != null.
+     * The saga resumes from the last completed step. The only unrecoverable
+     * case is when the code was consumed but the token was never persisted
+     * (crash in the ~5ms between Meta response and DB commit).
      */
-
     @Async("onboardingTaskExecutor")
     public void redispatch(OnboardingTask task) {
-        log.info("Retry requested for onboarding task: taskId={}, attempt={}, startedAt={}",
-                task.getId(), task.getRetryCount() + 1, task.getStartedAt());
+        log.info("Retry requested: taskId={}, attempt={}, completedSteps={}",
+                task.getId(), task.getRetryCount() + 1, task.getCompletedSteps());
 
-        // OAuth codes are single-use — if task previously reached PROCESSING, code is consumed
-        if (task.getStartedAt() != null) {
-            String msg = "OAuth code already consumed (task previously reached PROCESSING at " +
-                    task.getStartedAt() + "). " +
-                    "Meta OAuth codes are single-use. Customer must restart embedded signup.";
-            log.warn("Skipping retry for taskId={}: {}", task.getId(), msg);
+        // Check for the narrow unrecoverable window:
+        // Code was consumed (task reached PROCESSING before) but token was never saved
+        if (task.getStartedAt() != null
+                && task.getEncryptedAccessToken() == null
+                && !task.isStepCompleted(OnboardingStep.TOKEN_EXCHANGE)) {
+
+            String msg = "OAuth code consumed but token was never persisted " +
+                    "(crash between Meta call and DB write). " +
+                    "Customer must restart embedded signup for a fresh code.";
+            log.warn("Unrecoverable task: taskId={} — {}", task.getId(), msg);
             taskStateService.markFailed(task.getId(), msg);
             return;
         }
 
-        log.info("Retrying onboarding task on thread [{}]: taskId={}, attempt={}",
-                Thread.currentThread().getName(), task.getId(), task.getRetryCount() + 1);
-
-        // FIX 4: Reconstruct FULL request including phoneNumberId and signupType
-        // Without these, retry loses coexistence context → SMB sync skipped,
-        // wrong phone number discovered on re-run
+        // Reconstruct request with resolved values from previous attempt
         EmbeddedSignupCallbackRequest request = EmbeddedSignupCallbackRequest.builder()
                 .organizationId(task.getOrganizationId())
                 .code(task.getOauthCode())
-                .wabaId(task.getWabaId())
-                .businessManagerId(task.getBusinessManagerId())
-                .phoneNumberId(task.getPhoneNumberId())       // FIX 4
-                .signupType(task.getSignupType())              // FIX 4
+                .wabaId(task.getResolvedWabaId() != null
+                        ? task.getResolvedWabaId() : task.getWabaId())
+                .businessManagerId(task.getResolvedBusinessManagerId() != null
+                        ? task.getResolvedBusinessManagerId() : task.getBusinessManagerId())
+                .phoneNumberId(task.getResolvedPhoneNumberId() != null
+                        ? task.getResolvedPhoneNumberId() : task.getPhoneNumberId())
+                .signupType(task.getSignupType())
                 .build();
 
+        // dispatch() will call tryClaimTask() — safe against concurrent retries
         dispatch(task.getId(), request);
     }
 }

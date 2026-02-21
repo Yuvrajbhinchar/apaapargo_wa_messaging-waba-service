@@ -3,14 +3,18 @@ package com.aigreentick.services.wabaaccounts.service;
 import com.aigreentick.services.wabaaccounts.client.MetaApiClient;
 import com.aigreentick.services.wabaaccounts.client.MetaApiRetryExecutor;
 import com.aigreentick.services.wabaaccounts.config.MetaApiConfig;
+import com.aigreentick.services.wabaaccounts.constants.OnboardingStep;
 import com.aigreentick.services.wabaaccounts.constants.WabaStatus;
 import com.aigreentick.services.wabaaccounts.dto.request.EmbeddedSignupCallbackRequest;
 import com.aigreentick.services.wabaaccounts.dto.response.EmbeddedSignupResponse;
 import com.aigreentick.services.wabaaccounts.dto.response.MetaApiResponse;
 import com.aigreentick.services.wabaaccounts.dto.response.PhoneNumberResponse;
 import com.aigreentick.services.wabaaccounts.dto.response.SignupConfigResponse;
+import com.aigreentick.services.wabaaccounts.entity.OnboardingTask;
 import com.aigreentick.services.wabaaccounts.exception.InvalidRequestException;
+import com.aigreentick.services.wabaaccounts.exception.TaskOwnershipLostException;
 import com.aigreentick.services.wabaaccounts.repository.WabaAccountRepository;
+import com.aigreentick.services.wabaaccounts.security.TokenEncryptionService;
 import com.aigreentick.services.wabaaccounts.service.OnboardingModel.PersistedOnboardingData;
 import com.aigreentick.services.wabaaccounts.service.OnboardingModel.TokenResult;
 import lombok.RequiredArgsConstructor;
@@ -33,8 +37,9 @@ public class EmbeddedSignupService {
     private final PhoneNumberService phoneNumberService;
     private final PhoneRegistrationService phoneRegistrationService;
     private final SystemUserProvisioningService systemUserProvisioningService;
-    private final OnboardingPersistenceService onboardingPersistenceService; // ← replaces old inline logic
-    private static final long SIGNUP_TIMEOUT_SECONDS = 120;
+    private final OnboardingPersistenceService onboardingPersistenceService;
+    private final OnboardingTaskStateService taskStateService;
+    private final TokenEncryptionService tokenEncryptionService;
 
     private static final List<String> REQUIRED_SCOPES = List.of(
             "whatsapp_business_management",
@@ -45,7 +50,7 @@ public class EmbeddedSignupService {
     private static final long MIN_LONG_LIVED_SECONDS = 7L * 24 * 3600;
 
     // ═══════════════════════════════════════════════════════════
-    // CONFIG
+    // CONFIG (unchanged)
     // ═══════════════════════════════════════════════════════════
 
     public SignupConfigResponse getSignupConfig() {
@@ -60,97 +65,72 @@ public class EmbeddedSignupService {
     }
 
     // ═══════════════════════════════════════════════════════════
-    // MAIN FLOW
+    // MAIN SAGA — step-based, resumable, no artificial timeout
     // ═══════════════════════════════════════════════════════════
+
+    /**
+     * Check if this worker still owns the task.
+     * Called between major phases to detect cancellation/reset early.
+     *
+     * If the task is no longer PROCESSING, the user cancelled it or
+     * the scheduler reset it. Continuing would waste Meta API calls
+     * and potentially create orphaned resources.
+     */
+    private void assertOwnership(Long taskId) {
+        if (!taskStateService.verifyOwnership(taskId)) {
+            OnboardingTask task = taskStateService.loadTaskState(taskId);
+            throw new TaskOwnershipLostException(taskId, task.getStatus().name());
+        }
+    }
+
+    // ── UPDATED processSignupCallback with ownership checks ──────
 
     public EmbeddedSignupResponse processSignupCallback(EmbeddedSignupCallbackRequest request,
                                                         Long taskId) {
-        long deadlineEpochMs = System.currentTimeMillis() + (SIGNUP_TIMEOUT_SECONDS * 1000);
-        log.info("Embedded signup started: taskId={}, orgId={}, coexistence={}",
+        log.info("Signup saga started: taskId={}, orgId={}, coexistence={}",
                 taskId, request.getOrganizationId(), request.isCoexistenceFlow());
 
-        // Step A: Exchange OAuth code
-        String shortLivedToken = exchangeCodeForToken(request.getCode());
-        checkDeadline(deadlineEpochMs, "tokenExchange", request.getOrganizationId(),taskId);
+        OnboardingTask taskState = taskStateService.loadTaskState(taskId);
 
-        // Step B: Extend to long-lived token
-        TokenResult tokenResult = extendToLongLivedToken(shortLivedToken);
-        log.info("Long-lived token obtained. Expires ~{} days", tokenResult.expiresIn() / 86400);
-        checkDeadline(deadlineEpochMs, "tokenExtension", request.getOrganizationId(),taskId);
+        // ── Phase 1: Token (irreversible) ──
+        TokenResult tokenResult = executeTokenPhase(request, taskId, taskState);
 
-        // Step C: Verify scopes
-        verifyOAuthScopes(tokenResult.accessToken());
-        checkDeadline(deadlineEpochMs, "scopeVerification", request.getOrganizationId(), taskId);
+        assertOwnership(taskId);  // ← check before Phase 2
 
-        // Step D: Resolve WABA ID
-        String wabaId = resolveAndVerifyWabaOwnership(request, tokenResult.accessToken());
-        checkDeadline(deadlineEpochMs, "wabaResolution", request.getOrganizationId(),taskId);
+        // ── Phase 2: Discovery ──
+        String wabaId = executeWabaResolution(request, taskId, taskState, tokenResult.accessToken());
+        String bmId = executeBmResolution(request, taskId, taskState, wabaId, tokenResult.accessToken());
+        String phoneId = executePhoneResolution(request, taskId, taskState, wabaId, tokenResult.accessToken());
 
-        // Step E: Resolve Business Manager ID
-        String businessManagerId = resolveBusinessManagerId(request, wabaId, tokenResult.accessToken());
-        checkDeadline(deadlineEpochMs, "businessManagerResolution", request.getOrganizationId(),taskId);
+        assertOwnership(taskId);  // ← check before persistence
 
-        // Step F: Resolve phone number ID
-        String resolvedPhoneNumberId = resolvePhoneNumberId(request, wabaId, tokenResult.accessToken());
-        checkDeadline(deadlineEpochMs, "phoneResolution", request.getOrganizationId(),taskId);
+        // ── Phase 3: Persist credentials ──
+        PersistedOnboardingData saved = executeCredentialPersistence(
+                request, taskId, taskState, tokenResult, wabaId, bmId);
 
-        // Step G: DB writes via dedicated transactional service bean
-        PersistedOnboardingData saved = onboardingPersistenceService.persistOnboardingData(
-                request, tokenResult, wabaId, businessManagerId);
-        checkDeadline(deadlineEpochMs, "persistence", request.getOrganizationId(),taskId);
+        assertOwnership(taskId);  // ← check before best-effort externals
 
-        // Steps G2–J: Best-effort external calls (OUTSIDE transaction)
+        // ── Phase 4: Best-effort setup ──
+        boolean webhookOk = executeWebhookSubscription(taskId, taskState, wabaId, tokenResult.accessToken());
 
-        // Step G2: Webhook subscribe
-        boolean webhookOk = subscribeAndVerifyWebhook(wabaId, tokenResult.accessToken());
-        checkDeadline(deadlineEpochMs, "webhookSubscribe", request.getOrganizationId(),taskId);
+        assertOwnership(taskId);  // ← check between external calls
 
-        // Step G3: Phone sync
-        List<PhoneNumberResponse> phoneNumbers = new ArrayList<>();
-        try {
-            phoneNumberService.syncPhoneNumbersFromMeta(saved.waba(), tokenResult.accessToken());
-            phoneNumbers = phoneNumberService.getPhoneNumbersByWaba(saved.waba().getId());
-        } catch (Exception ex) {
-            log.warn("Phone sync failed (retry via /{}/sync). Error: {}",
-                    saved.waba().getId(), ex.getMessage());
-        }
-        checkDeadline(deadlineEpochMs, "phoneSync", request.getOrganizationId(),taskId);
+        List<PhoneNumberResponse> phoneNumbers = executePhoneSync(taskId, taskState, saved, tokenResult.accessToken());
+        executePhoneRegistration(taskId, taskState, phoneId, tokenResult.accessToken());
+        executeSmbSync(request, taskId, taskState, phoneId, tokenResult.accessToken());
 
-        // Step H: Register phone
-        if (resolvedPhoneNumberId != null) {
-            boolean registered = phoneRegistrationService.registerPhoneNumber(
-                    resolvedPhoneNumberId, tokenResult.accessToken());
-            if (registered) {
-                log.info("Phone registered: phoneNumberId={}", resolvedPhoneNumberId);
-            } else {
-                log.warn("Phone registration failed: phoneNumberId={}", resolvedPhoneNumberId);
-            }
-        }
-        checkDeadline(deadlineEpochMs, "phoneRegistration", request.getOrganizationId(),taskId);
+        assertOwnership(taskId);  // ← check before Phase 2 provisioning (heaviest call)
 
-        // Step I: SMB sync for coexistence
-        if (request.isCoexistenceFlow() && resolvedPhoneNumberId != null) {
-            log.info("Coexistence flow — initiating SMB sync: phoneNumberId={}", resolvedPhoneNumberId);
-            phoneRegistrationService.initiateSmbSync(resolvedPhoneNumberId, tokenResult.accessToken());
-        }
+        executePhase2(request, taskId, taskState);
 
-        // Step J: Phase 2 provisioning — skip if deadline is close
-        boolean phase2Ok = false;
-        if (System.currentTimeMillis() < deadlineEpochMs - 10_000) { // 10s buffer for Phase 2
-            phase2Ok = systemUserProvisioningService.tryProvisionAfterSignup(request.getOrganizationId());
-            if (phase2Ok) {
-                log.info("Phase 2 complete: orgId={}", request.getOrganizationId());
-            }
-        } else {
-            log.warn("Skipping Phase 2 provisioning — deadline approaching. orgId={}. " +
-                    "Will be retried by TokenMaintenanceScheduler.", request.getOrganizationId());
-        }
+        log.info("Signup saga completed: taskId={}, wabaId={}, phones={}",
+                taskId, wabaId, phoneNumbers.size());
 
         return EmbeddedSignupResponse.builder()
                 .wabaAccountId(saved.waba().getId())
                 .wabaId(wabaId)
                 .status(saved.waba().getStatus().getValue())
-                .businessManagerId(businessManagerId)
+                .businessManagerId(bmId)
                 .tokenExpiresIn(tokenResult.expiresIn())
                 .longLivedToken(tokenResult.isLongLived())
                 .phoneNumbers(phoneNumbers)
@@ -161,7 +141,272 @@ public class EmbeddedSignupService {
     }
 
     // ═══════════════════════════════════════════════════════════
-    // STEP A: Token Exchange
+    // STEP A+B: Token Phase — CRITICAL: persist immediately
+    // ═══════════════════════════════════════════════════════════
+
+    private TokenResult executeTokenPhase(EmbeddedSignupCallbackRequest request,
+                                          Long taskId, OnboardingTask taskState) {
+
+        // ── RESUME CHECK: If token was already acquired in a previous attempt,
+        //    reload it from the task instead of re-exchanging the consumed code.
+        if (taskState.isStepCompleted(OnboardingStep.TOKEN_EXTENSION)
+                && taskState.getEncryptedAccessToken() != null) {
+
+            log.info("Task {}: token already acquired — resuming from saved state", taskId);
+            String decryptedToken = tokenEncryptionService.decrypt(taskState.getEncryptedAccessToken());
+            long expiresIn = taskState.getTokenExpiresIn() != null ? taskState.getTokenExpiresIn() : 0L;
+            return new TokenResult(decryptedToken, expiresIn, expiresIn >= MIN_LONG_LIVED_SECONDS);
+        }
+
+        // ── Step A: Exchange code → short-lived token ──
+        String shortLivedToken;
+        if (taskState.isStepCompleted(OnboardingStep.TOKEN_EXCHANGE)
+                && taskState.getEncryptedAccessToken() != null) {
+            // Code was exchanged but extension failed — reuse short-lived token
+            log.info("Task {}: code already exchanged — reusing short-lived token", taskId);
+            shortLivedToken = tokenEncryptionService.decrypt(taskState.getEncryptedAccessToken());
+        } else {
+            shortLivedToken = exchangeCodeForToken(request.getCode());
+
+            // ╔══════════════════════════════════════════════════════════╗
+            // ║  CRITICAL: Persist token IMMEDIATELY after exchange.    ║
+            // ║  The OAuth code is now consumed. If we crash before     ║
+            // ║  this save, the token is lost and retry is impossible.  ║
+            // ║  REQUIRES_NEW ensures this commit survives any outer    ║
+            // ║  transaction rollback.                                  ║
+            // ╚══════════════════════════════════════════════════════════╝
+            String encryptedShortToken = tokenEncryptionService.encrypt(shortLivedToken);
+            taskStateService.persistStepResult(taskId, OnboardingStep.TOKEN_EXCHANGE, task -> {
+                task.setEncryptedAccessToken(encryptedShortToken);
+            });
+            log.info("Task {}: OAuth code exchanged — short-lived token persisted to DB", taskId);
+        }
+
+        // ── Step B: Extend to long-lived token ──
+        TokenResult tokenResult = extendToLongLivedToken(shortLivedToken);
+
+        // Persist long-lived token immediately (overwrites short-lived)
+        String encryptedLongToken = tokenEncryptionService.encrypt(tokenResult.accessToken());
+        taskStateService.persistStepResult(taskId, OnboardingStep.TOKEN_EXTENSION, task -> {
+            task.setEncryptedAccessToken(encryptedLongToken);
+            task.setTokenExpiresIn(tokenResult.expiresIn());
+        });
+        log.info("Task {}: long-lived token persisted ({} days expiry)",
+                taskId, tokenResult.expiresIn() / 86400);
+
+        // ── Step C: Verify scopes (non-fatal) ──
+        if (!taskState.isStepCompleted(OnboardingStep.SCOPE_VERIFICATION)) {
+            verifyOAuthScopes(tokenResult.accessToken());
+            taskStateService.persistStepCompleted(taskId, OnboardingStep.SCOPE_VERIFICATION);
+        }
+
+        return tokenResult;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // STEP D: WABA Resolution — resumable
+    // ═══════════════════════════════════════════════════════════
+
+    private String executeWabaResolution(EmbeddedSignupCallbackRequest request,
+                                         Long taskId, OnboardingTask taskState,
+                                         String accessToken) {
+
+        if (taskState.isStepCompleted(OnboardingStep.WABA_RESOLUTION)
+                && taskState.getResolvedWabaId() != null) {
+            log.info("Task {}: WABA already resolved — {}", taskId, taskState.getResolvedWabaId());
+            return taskState.getResolvedWabaId();
+        }
+
+        String wabaId = resolveAndVerifyWabaOwnership(request, accessToken);
+
+        taskStateService.persistStepResult(taskId, OnboardingStep.WABA_RESOLUTION, task -> {
+            task.setResolvedWabaId(wabaId);
+        });
+
+        return wabaId;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // STEP E: Business Manager Resolution — resumable
+    // ═══════════════════════════════════════════════════════════
+
+    private String executeBmResolution(EmbeddedSignupCallbackRequest request,
+                                       Long taskId, OnboardingTask taskState,
+                                       String wabaId, String accessToken) {
+
+        if (taskState.isStepCompleted(OnboardingStep.BM_RESOLUTION)
+                && taskState.getResolvedBusinessManagerId() != null) {
+            log.info("Task {}: BM already resolved — {}", taskId, taskState.getResolvedBusinessManagerId());
+            return taskState.getResolvedBusinessManagerId();
+        }
+
+        String bmId = resolveBusinessManagerId(request, wabaId, accessToken);
+
+        taskStateService.persistStepResult(taskId, OnboardingStep.BM_RESOLUTION, task -> {
+            task.setResolvedBusinessManagerId(bmId);
+        });
+
+        return bmId;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // STEP F: Phone Number Resolution — resumable
+    // ═══════════════════════════════════════════════════════════
+
+    private String executePhoneResolution(EmbeddedSignupCallbackRequest request,
+                                          Long taskId, OnboardingTask taskState,
+                                          String wabaId, String accessToken) {
+
+        if (taskState.isStepCompleted(OnboardingStep.PHONE_RESOLUTION)
+                && taskState.getResolvedPhoneNumberId() != null) {
+            log.info("Task {}: phone already resolved — {}", taskId, taskState.getResolvedPhoneNumberId());
+            return taskState.getResolvedPhoneNumberId();
+        }
+
+        String phoneId = resolvePhoneNumberId(request, wabaId, accessToken);
+
+        if (phoneId != null) {
+            taskStateService.persistStepResult(taskId, OnboardingStep.PHONE_RESOLUTION, task -> {
+                task.setResolvedPhoneNumberId(phoneId);
+            });
+        } else {
+            taskStateService.persistStepCompleted(taskId, OnboardingStep.PHONE_RESOLUTION);
+        }
+
+        return phoneId;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // STEP G: Credential Persistence — resumable
+    // ═══════════════════════════════════════════════════════════
+
+    private PersistedOnboardingData executeCredentialPersistence(
+            EmbeddedSignupCallbackRequest request, Long taskId,
+            OnboardingTask taskState, TokenResult tokenResult,
+            String wabaId, String businessManagerId) {
+
+        if (taskState.isStepCompleted(OnboardingStep.CREDENTIAL_PERSISTENCE)
+                && taskState.getResultWabaAccountId() != null) {
+            log.info("Task {}: credentials already persisted — wabaAccountId={}",
+                    taskId, taskState.getResultWabaAccountId());
+
+            // Reload from DB for subsequent steps
+            var waba = wabaAccountRepository.findById(taskState.getResultWabaAccountId())
+                    .orElseThrow(() -> new InvalidRequestException(
+                            "WabaAccount " + taskState.getResultWabaAccountId() + " not found on resume"));
+            return new PersistedOnboardingData(waba, null);
+        }
+
+        PersistedOnboardingData saved = onboardingPersistenceService.persistOnboardingData(
+                request, tokenResult, wabaId, businessManagerId);
+
+        taskStateService.persistStepResult(taskId, OnboardingStep.CREDENTIAL_PERSISTENCE, task -> {
+            task.setResultWabaAccountId(saved.waba().getId());
+        });
+
+        return saved;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // STEPS G2-J: Best-effort external setup (idempotent guards)
+    // ═══════════════════════════════════════════════════════════
+
+    private boolean executeWebhookSubscription(Long taskId, OnboardingTask taskState,
+                                               String wabaId, String accessToken) {
+        if (taskState.isStepCompleted(OnboardingStep.WEBHOOK_SUBSCRIBE)) {
+            log.info("Task {}: webhook already subscribed — skipping", taskId);
+            return true;
+        }
+
+        boolean ok = subscribeAndVerifyWebhook(wabaId, accessToken);
+
+        // Always mark complete — webhook subscribe is idempotent on Meta's side
+        // and we don't want to re-run it on retry even if it "failed" (best-effort)
+        taskStateService.persistStepCompleted(taskId, OnboardingStep.WEBHOOK_SUBSCRIBE);
+        return ok;
+    }
+
+    private List<PhoneNumberResponse> executePhoneSync(Long taskId, OnboardingTask taskState,
+                                                       PersistedOnboardingData saved,
+                                                       String accessToken) {
+        if (taskState.isStepCompleted(OnboardingStep.PHONE_SYNC)) {
+            log.info("Task {}: phone sync already done — loading from DB", taskId);
+            try {
+                return phoneNumberService.getPhoneNumbersByWaba(saved.waba().getId());
+            } catch (Exception ex) {
+                return List.of();
+            }
+        }
+
+        List<PhoneNumberResponse> phoneNumbers = new ArrayList<>();
+        try {
+            phoneNumberService.syncPhoneNumbersFromMeta(saved.waba(), accessToken);
+            phoneNumbers = phoneNumberService.getPhoneNumbersByWaba(saved.waba().getId());
+        } catch (Exception ex) {
+            log.warn("Task {}: phone sync failed (retry via /{}/sync): {}",
+                    taskId, saved.waba().getId(), ex.getMessage());
+        }
+
+        taskStateService.persistStepCompleted(taskId, OnboardingStep.PHONE_SYNC);
+        return phoneNumbers;
+    }
+
+    private void executePhoneRegistration(Long taskId, OnboardingTask taskState,
+                                          String phoneNumberId, String accessToken) {
+        if (phoneNumberId == null) return;
+
+        if (taskState.isStepCompleted(OnboardingStep.PHONE_REGISTRATION)) {
+            log.info("Task {}: phone already registered — skipping", taskId);
+            return;
+        }
+
+        boolean registered = phoneRegistrationService.registerPhoneNumber(phoneNumberId, accessToken);
+        if (registered) {
+            log.info("Task {}: phone registered: {}", taskId, phoneNumberId);
+        } else {
+            log.warn("Task {}: phone registration failed: {}", taskId, phoneNumberId);
+        }
+
+        // Mark complete regardless — registration is best-effort and
+        // "already registered" is handled inside registerPhoneNumber()
+        taskStateService.persistStepCompleted(taskId, OnboardingStep.PHONE_REGISTRATION);
+    }
+
+    private void executeSmbSync(EmbeddedSignupCallbackRequest request, Long taskId,
+                                OnboardingTask taskState, String phoneNumberId,
+                                String accessToken) {
+        if (!request.isCoexistenceFlow() || phoneNumberId == null) return;
+
+        if (taskState.isStepCompleted(OnboardingStep.SMB_SYNC)) {
+            log.info("Task {}: SMB sync already done — skipping", taskId);
+            return;
+        }
+
+        log.info("Task {}: coexistence flow — initiating SMB sync: {}", taskId, phoneNumberId);
+        phoneRegistrationService.initiateSmbSync(phoneNumberId, accessToken);
+
+        taskStateService.persistStepCompleted(taskId, OnboardingStep.SMB_SYNC);
+    }
+
+    private void executePhase2(EmbeddedSignupCallbackRequest request, Long taskId,
+                               OnboardingTask taskState) {
+        if (taskState.isStepCompleted(OnboardingStep.PHASE2_PROVISIONING)) {
+            log.info("Task {}: Phase 2 already done — skipping", taskId);
+            return;
+        }
+
+        boolean ok = systemUserProvisioningService.tryProvisionAfterSignup(request.getOrganizationId());
+        if (ok) {
+            log.info("Task {}: Phase 2 complete: orgId={}", taskId, request.getOrganizationId());
+        }
+
+        // Mark complete even on failure — Phase 2 has its own retry via scheduler
+        taskStateService.persistStepCompleted(taskId, OnboardingStep.PHASE2_PROVISIONING);
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // PRIVATE HELPERS — unchanged from original
+    // (moved here for completeness, same logic)
     // ═══════════════════════════════════════════════════════════
 
     private String exchangeCodeForToken(String code) {
@@ -180,10 +425,6 @@ public class EmbeddedSignupService {
         }
         return token.toString();
     }
-
-    // ═══════════════════════════════════════════════════════════
-    // STEP B: Token Extension
-    // ═══════════════════════════════════════════════════════════
 
     private TokenResult extendToLongLivedToken(String shortLivedToken) {
         try {
@@ -217,10 +458,6 @@ public class EmbeddedSignupService {
             throw new InvalidRequestException("Failed to extend token: " + ex.getMessage());
         }
     }
-
-    // ═══════════════════════════════════════════════════════════
-    // STEP C: Scope Verification
-    // ═══════════════════════════════════════════════════════════
 
     private void verifyOAuthScopes(String accessToken) {
         try {
@@ -258,10 +495,6 @@ public class EmbeddedSignupService {
             log.warn("Scope check failed unexpectedly (proceeding): {}", ex.getMessage());
         }
     }
-
-    // ═══════════════════════════════════════════════════════════
-    // STEP D: WABA Ownership
-    // ═══════════════════════════════════════════════════════════
 
     private String resolveAndVerifyWabaOwnership(EmbeddedSignupCallbackRequest request,
                                                  String accessToken) {
@@ -316,10 +549,6 @@ public class EmbeddedSignupService {
         throw new InvalidRequestException("No WABA found in any Business Manager.");
     }
 
-    // ═══════════════════════════════════════════════════════════
-    // STEP E: Business Manager ID
-    // ═══════════════════════════════════════════════════════════
-
     private String resolveBusinessManagerId(EmbeddedSignupCallbackRequest request,
                                             String wabaId, String accessToken) {
         if (request.getBusinessManagerId() != null && !request.getBusinessManagerId().isBlank()) {
@@ -341,10 +570,6 @@ public class EmbeddedSignupService {
         return "UNKNOWN-" + wabaId;
     }
 
-    // ═══════════════════════════════════════════════════════════
-    // STEP F: Phone Number ID
-    // ═══════════════════════════════════════════════════════════
-
     private String resolvePhoneNumberId(EmbeddedSignupCallbackRequest request,
                                         String wabaId, String accessToken) {
         if (request.hasPhoneNumberId()) {
@@ -365,10 +590,6 @@ public class EmbeddedSignupService {
                 discovered.phoneNumberId(), discovered.displayPhoneNumber());
         return discovered.phoneNumberId();
     }
-
-    // ═══════════════════════════════════════════════════════════
-    // WEBHOOK
-    // ═══════════════════════════════════════════════════════════
 
     private boolean subscribeAndVerifyWebhook(String wabaId, String accessToken) {
         try {
@@ -395,7 +616,7 @@ public class EmbeddedSignupService {
             return active;
         } catch (Exception ex) {
             log.warn("Webhook health check failed: wabaId={}", wabaId);
-            return true; // subscription likely active
+            return true;
         }
     }
 
@@ -413,10 +634,6 @@ public class EmbeddedSignupService {
             return false;
         }
     }
-
-    // ═══════════════════════════════════════════════════════════
-    // HELPERS
-    // ═══════════════════════════════════════════════════════════
 
     private String buildExtrasJson() {
         return "{\"feature\": \"whatsapp_embedded_signup\", \"version\": 2, \"sessionInfoVersion\": \"3\"}";
@@ -441,22 +658,5 @@ public class EmbeddedSignupService {
         return !wabaAccountRepository
                 .findByOrganizationIdAndStatus(organizationId, WabaStatus.ACTIVE)
                 .isEmpty();
-    }
-    // ADD this helper method at the bottom of the class (before buildExtrasJson)
-
-    /**
-     * Check if the overall signup deadline has been exceeded.
-     * Called between major steps to fail fast instead of burning
-     * thread pool time on a flow that's already too slow.
-     */
-    private void checkDeadline(long deadlineEpochMs, String stepName, Long orgId, Long taskId) {
-        if (System.currentTimeMillis() > deadlineEpochMs) {
-            String msg = String.format(
-                    "Signup flow timed out at step '%s' for taskId=%d, orgId=%d. " +
-                            "Deadline of %ds exceeded. Meta API may be degraded.",
-                    stepName, taskId, orgId, SIGNUP_TIMEOUT_SECONDS);
-            log.error(msg);
-            throw new InvalidRequestException(msg);
-        }
     }
 }

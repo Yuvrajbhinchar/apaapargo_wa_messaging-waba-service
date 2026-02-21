@@ -1,11 +1,15 @@
 package com.aigreentick.services.wabaaccounts.entity;
 
+import com.aigreentick.services.wabaaccounts.constants.OnboardingStep;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDateTime;
+import java.util.Arrays;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Entity
 @Table(
@@ -38,7 +42,7 @@ public class OnboardingTask {
      *     time to reset it first (resetStuckTasks() runs every 5m). Only if
      *     the scheduler also fails does the customer need self-service.
      */
-    public static final int STUCK_PROCESSING_MINUTES = 10;
+    public static final int STUCK_PROCESSING_MINUTES = 15;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -96,6 +100,71 @@ public class OnboardingTask {
 
     @Column(name = "finished_at")
     private LocalDateTime finishedAt;
+
+    /**
+     * Comma-separated list of completed step names.
+     * Example: "TOKEN_EXCHANGE,TOKEN_EXTENSION,SCOPE_VERIFICATION"
+     *
+     * Used to resume a saga from where it left off after crash/restart.
+     * Each step checks isStepCompleted() before running — idempotent.
+     */
+    @Column(name = "completed_steps", columnDefinition = "TEXT")
+    private String completedSteps;
+
+    /**
+     * Encrypted access token — persisted IMMEDIATELY after exchange.
+     * This closes the data-loss window between code consumption and
+     * Step G persistence.
+     *
+     * WHY NOT reuse MetaOAuthAccount?
+     * Because MetaOAuthAccount is created in Step G. If we crash before
+     * Step G, the token is lost. This field is the safety net.
+     */
+    @Column(name = "encrypted_access_token", columnDefinition = "TEXT")
+    private String encryptedAccessToken;
+
+    /** Token expiry in seconds — persisted alongside token */
+    @Column(name = "token_expires_in")
+    private Long tokenExpiresIn;
+
+    /** Resolved WABA ID — may differ from initial request */
+    @Column(name = "resolved_waba_id", length = 100)
+    private String resolvedWabaId;
+
+    /** Resolved Business Manager ID */
+    @Column(name = "resolved_bm_id", length = 100)
+    private String resolvedBusinessManagerId;
+
+    /** Resolved phone number ID (auto-discovered or from request) */
+    @Column(name = "resolved_phone_number_id", length = 100)
+    private String resolvedPhoneNumberId;
+
+    /** DB ID of the created WabaAccount — set after Step G */
+    // (resultWabaAccountId already exists — reuse it)
+
+    // ── Step tracking methods ──────────────────────────────────
+
+    public boolean isStepCompleted(OnboardingStep step) {
+        if (completedSteps == null || completedSteps.isBlank()) return false;
+        return Set.of(completedSteps.split(",")).contains(step.name());
+    }
+
+    public void markStepCompleted(OnboardingStep step) {
+        if (completedSteps == null || completedSteps.isBlank()) {
+            completedSteps = step.name();
+        } else if (!isStepCompleted(step)) {
+            completedSteps = completedSteps + "," + step.name();
+        }
+    }
+
+    public Set<OnboardingStep> getCompletedStepSet() {
+        if (completedSteps == null || completedSteps.isBlank()) {
+            return Set.of();
+        }
+        return Arrays.stream(completedSteps.split(","))
+                .map(OnboardingStep::valueOf)
+                .collect(Collectors.toSet());
+    }
 
     // ════════════════════════════════════════════════════════════
     // STATUS ENUM

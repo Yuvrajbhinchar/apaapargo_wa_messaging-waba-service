@@ -1,5 +1,6 @@
 package com.aigreentick.services.wabaaccounts.service;
 
+import com.aigreentick.services.wabaaccounts.constants.OnboardingStep;
 import com.aigreentick.services.wabaaccounts.entity.OnboardingTask;
 import com.aigreentick.services.wabaaccounts.exception.WabaNotFoundException;
 import com.aigreentick.services.wabaaccounts.repository.OnboardingTaskRepository;
@@ -9,6 +10,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
+
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -16,75 +19,136 @@ public class OnboardingTaskStateService {
 
     private final OnboardingTaskRepository taskRepository;
 
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void markProcessing(Long taskId) {
-        OnboardingTask task = findOrThrow(taskId);
-        task.markProcessing();
-        taskRepository.save(task);
-        log.debug("Task {} → PROCESSING", taskId);
-    }
+    // ════════════════════════════════════════════════════════════
+    // CLAIM
+    // ════════════════════════════════════════════════════════════
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void markCompleted(Long taskId, Long wabaAccountId, String summary) {
-        OnboardingTask task = findOrThrow(taskId);
-        task.markCompleted(wabaAccountId, summary);
-        taskRepository.save(task);
-        log.debug("Task {} → COMPLETED (wabaAccountId={})", taskId, wabaAccountId);
+    public boolean tryClaimTask(Long taskId) {
+        int updated = taskRepository.claimTaskForProcessing(taskId, LocalDateTime.now());
+        if (updated == 0) {
+            log.warn("Task {} claim FAILED — already claimed by another worker", taskId);
+            return false;
+        }
+        log.info("Task {} claimed by thread [{}]", taskId, Thread.currentThread().getName());
+        return true;
     }
 
+    // ════════════════════════════════════════════════════════════
+    // TERMINAL TRANSITIONS — asymmetric CAS (GAP 1 FIX)
+    // ════════════════════════════════════════════════════════════
+
+    /**
+     * Mark completed. Wins over both PROCESSING and FAILED.
+     * Only loses to CANCELLED (user explicitly cancelled — respect that).
+     */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void markFailed(Long taskId, String errorMessage) {
-        OnboardingTask task = findOrThrow(taskId);
-        task.markFailed(errorMessage);
-        taskRepository.save(task);
-        log.debug("Task {} → FAILED (attempt {})", taskId, task.getRetryCount());
+    public boolean markCompleted(Long taskId, Long wabaAccountId, String summary) {
+        int updated = taskRepository.completeTask(
+                taskId, wabaAccountId, summary, LocalDateTime.now());
+
+        if (updated == 0) {
+            // Task is COMPLETED (idempotent) or CANCELLED (user chose to cancel).
+            // Either way, this worker's result is discarded — which is fine.
+            OnboardingTask current = findOrThrow(taskId);
+            log.warn("Task {} completion CAS returned 0 — current status: {}",
+                    taskId, current.getStatus());
+            return false;
+        }
+
+        log.info("Task {} → COMPLETED (wabaAccountId={})", taskId, wabaAccountId);
+        return true;
     }
 
     /**
-     * Cancel a task. Three outcomes:
-     *
-     *   1. Already CANCELLED → return it as-is (idempotent, no DB write needed).
-     *      EDGE CASE 2 FIX: double-cancel is safe, not an error.
-     *
-     *   2. FAILED or stale PROCESSING → transition to CANCELLED.
-     *      EDGE CASE 1 FIX: stale PROCESSING is now cancellable, not just FAILED.
-     *
-     *   3. Anything else (fresh PROCESSING, PENDING, COMPLETED) → throw.
-     *      These states must not be cancelled:
-     *        - PENDING/fresh PROCESSING: a worker is about to run or is running.
-     *          Cancelling here would leave the worker running against a cancelled
-     *          task — it would still call Meta APIs and the result would be lost.
-     *        - COMPLETED: customer already connected successfully; nothing to cancel.
-     *
-     * @return the (possibly unchanged) task in CANCELLED state
-     * @throws IllegalStateException if the task is not cancellable
+     * Mark failed. Only overwrites PROCESSING.
+     * Cannot overwrite COMPLETED (GAP 1 FIX) or CANCELLED.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean markFailed(Long taskId, String errorMessage) {
+        int updated = taskRepository.failTask(taskId, errorMessage, LocalDateTime.now());
+
+        if (updated == 0) {
+            OnboardingTask current = findOrThrow(taskId);
+            log.warn("Task {} failure CAS returned 0 — current status: {} " +
+                            "(task likely completed or cancelled by another path)",
+                    taskId, current.getStatus());
+            return false;
+        }
+
+        log.info("Task {} → FAILED: {}", taskId, errorMessage);
+        return true;
+    }
+
+    /**
+     * Cancel. Handles idempotency and state checks.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public OnboardingTask markCancelled(Long taskId, String reason) {
         OnboardingTask task = findOrThrow(taskId);
 
-        // EDGE CASE 2: idempotent — already cancelled is fine, return immediately
         if (task.isAlreadyCancelled()) {
-            log.debug("Task {} already CANCELLED — idempotent no-op", taskId);
+            log.debug("Task {} already CANCELLED — no-op", taskId);
             return task;
         }
 
-        // EDGE CASE 1 + original: FAILED always cancellable; stale PROCESSING also cancellable
         if (!task.isCancellable()) {
             String detail = task.getStatus() == OnboardingTask.Status.PROCESSING
-                    ? "Task is still actively processing (started at " + task.getStartedAt() +
-                    "). Wait " + OnboardingTask.STUCK_PROCESSING_MINUTES + " minutes or let the scheduler reset it."
-                    : "Only FAILED or stale PROCESSING tasks can be cancelled. Current status: " + task.getStatus();
+                    ? "Task is actively processing (started " + task.getStartedAt() +
+                    "). Wait " + OnboardingTask.STUCK_PROCESSING_MINUTES + " min."
+                    : "Cannot cancel task in status: " + task.getStatus();
             throw new IllegalStateException(detail);
         }
 
         task.markCancelled(reason);
         OnboardingTask saved = taskRepository.save(task);
-        log.info("Task {} → CANCELLED (was {}). Reason: {}", taskId, task.getStatus(), reason);
+        log.info("Task {} → CANCELLED. Reason: {}", taskId, reason);
         return saved;
     }
 
-    // ─────────────────────────────────────────────────────────────
+    // ════════════════════════════════════════════════════════════
+    // OWNERSHIP CHECK (GAP 2 FIX)
+    // ════════════════════════════════════════════════════════════
+
+    /**
+     * Check if this worker still owns the task.
+     * Returns true only if status is still PROCESSING.
+     */
+    @Transactional(readOnly = true)
+    public boolean verifyOwnership(Long taskId) {
+        OnboardingTask task = findOrThrow(taskId);
+        return task.getStatus() == OnboardingTask.Status.PROCESSING;
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // STEP PERSISTENCE
+    // ════════════════════════════════════════════════════════════
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void persistStepResult(Long taskId, OnboardingStep step,
+                                  java.util.function.Consumer<OnboardingTask> stateUpdater) {
+        OnboardingTask task = findOrThrow(taskId);
+
+        if (task.getStatus() != OnboardingTask.Status.PROCESSING) {
+            throw new com.aigreentick.services.wabaaccounts.exception
+                    .TaskOwnershipLostException(taskId, task.getStatus().name());
+        }
+
+        stateUpdater.accept(task);
+        task.markStepCompleted(step);
+        taskRepository.save(task);
+        log.debug("Task {} — step {} persisted", taskId, step);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void persistStepCompleted(Long taskId, OnboardingStep step) {
+        persistStepResult(taskId, step, t -> {});
+    }
+
+    @Transactional(readOnly = true)
+    public OnboardingTask loadTaskState(Long taskId) {
+        return findOrThrow(taskId);
+    }
 
     private OnboardingTask findOrThrow(Long taskId) {
         return taskRepository.findById(taskId)
@@ -92,3 +156,5 @@ public class OnboardingTaskStateService {
                         "OnboardingTask not found: " + taskId));
     }
 }
+
+

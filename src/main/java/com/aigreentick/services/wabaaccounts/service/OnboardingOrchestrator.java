@@ -20,6 +20,7 @@ public class OnboardingOrchestrator {
     private final OnboardingTaskRepository taskRepository;
     private final OnboardingAsyncDispatcher dispatcher;
     private final OnboardingTaskStateService taskStateService;
+    private static final int MAX_RETRY_COUNT = 3;
 
     // ════════════════════════════════════════════════════════════
     // ENQUEUE
@@ -125,30 +126,82 @@ public class OnboardingOrchestrator {
     // STUCK TASK RECOVERY (scheduler)
     // ════════════════════════════════════════════════════════════
 
+    /**
+     * Retry failed onboarding tasks — fully atomic.
+     *
+     * GAP 4 FIX:
+     * Old code did read-then-write (findRetryableFailures → setStatus → save).
+     * Two scheduler instances running simultaneously could both read the same
+     * FAILED task and both reset it to PENDING → duplicate redispatch calls.
+     *
+     * The tryClaimTask() in dispatch() would prevent duplicate EXECUTION,
+     * but duplicate dispatches waste thread pool capacity and create
+     * confusing log noise.
+     *
+     * Fix: Use atomic CAS query (claimTaskForRetry) that transitions
+     * FAILED → PENDING only if the task is still FAILED. Second scheduler
+     * instance sees the task as PENDING → claimTaskForRetry returns 0.
+     */
+    @Transactional
+    public int retryFailedTasks() {
+        // Step 1: Find candidates (read-only, no state change)
+        List<OnboardingTask> candidates = taskRepository.findRetryableFailures();
+
+        if (candidates.isEmpty()) return 0;
+
+        int retried = 0;
+        for (OnboardingTask task : candidates) {
+            // Step 2: Atomic claim — FAILED → PENDING
+            // Only one scheduler instance wins per task
+            int updated = taskRepository.claimTaskForRetry(task.getId(), MAX_RETRY_COUNT);
+
+            if (updated == 0) {
+                // Another scheduler instance already claimed this task,
+                // or retryCount exceeded max between query and now
+                log.debug("Task {} retry claim failed — already claimed or max retries exceeded",
+                        task.getId());
+                continue;
+            }
+
+            log.info("Task {} claimed for retry (attempt {})", task.getId(), task.getRetryCount() + 1);
+
+            // Step 3: Reload fresh state and dispatch
+            // Must reload because the entity in `candidates` list is stale
+            // (status was FAILED, now it's PENDING after the atomic update)
+            OnboardingTask fresh = taskRepository.findById(task.getId()).orElse(null);
+            if (fresh != null) {
+                dispatcher.redispatch(fresh);
+                retried++;
+            }
+        }
+
+        if (retried > 0) {
+            log.info("Queued {} failed onboarding tasks for retry", retried);
+        }
+        return retried;
+    }
+
+    /**
+     * Reset stuck tasks — also atomic per GAP 4 principle.
+     * (Already fixed in previous artifact, included here for completeness)
+     */
     @Transactional
     public int resetStuckTasks() {
         LocalDateTime stuckThreshold = LocalDateTime.now().minusMinutes(
                 OnboardingTask.STUCK_PROCESSING_MINUTES);
         List<OnboardingTask> stuckTasks = taskRepository.findStuckTasks(stuckThreshold);
-        stuckTasks.forEach(task -> {
-            log.warn("Resetting stuck task: taskId={}, stuckSince={}",
-                    task.getId(), task.getStartedAt());
-            task.setStatus(OnboardingTask.Status.PENDING);
-            task.setStartedAt(null);
-            taskRepository.save(task);
-        });
-        return stuckTasks.size();
+
+        int resetCount = 0;
+        for (OnboardingTask task : stuckTasks) {
+            int updated = taskRepository.resetStuckTask(task.getId());
+            if (updated > 0) {
+                log.warn("Reset stuck task: taskId={}, stuckSince={}",
+                        task.getId(), task.getStartedAt());
+                resetCount++;
+            }
+        }
+        return resetCount;
     }
 
-    // ════════════════════════════════════════════════════════════
-    // FAILED TASK RETRY (scheduler)
-    // ════════════════════════════════════════════════════════════
 
-    @Transactional
-    public int retryFailedTasks() {
-        List<OnboardingTask> retryable = taskRepository.findRetryableFailures();
-        retryable.forEach(dispatcher::redispatch);
-        log.info("Queued {} retryable onboarding tasks", retryable.size());
-        return retryable.size();
-    }
 }
