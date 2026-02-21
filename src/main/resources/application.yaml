@@ -29,7 +29,7 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: validate           # JPA only validates
+      ddl-auto: update
       naming:
         physical-strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
     show-sql: false
