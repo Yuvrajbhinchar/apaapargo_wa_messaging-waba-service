@@ -13,7 +13,7 @@ spring:
   # DATABASE
   # ─────────────────────────────────────────────────────────
   datasource:
-    url: ${DB_URL:jdbc:mysql://localhost:3306/apargo_wa_messaging?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true&createDatabaseIfNotExist=true}
+    url: ${DB_URL:jdbc:mysql://localhost:3306/apargo?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true&createDatabaseIfNotExist=true}
     username: root
     password: yuvraj@3933
     driver-class-name: com.mysql.cj.jdbc.Driver

@@ -21,7 +21,7 @@ import org.springframework.scheduling.annotation.EnableAsync;
  *
  * Integration: Direct Meta Cloud API (Tech Partner)
  *
- * @author AiGreenTick Team
+ * @author Apargo Team
  * @version 1.0.0
  */
 @SpringBootApplication

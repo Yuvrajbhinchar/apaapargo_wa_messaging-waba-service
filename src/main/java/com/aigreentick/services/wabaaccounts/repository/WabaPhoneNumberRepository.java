@@ -13,63 +13,146 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Repository for WABA Phone Number operations
+ * Repository for WABA Phone Number operations.
+ *
+ * ═══════════════════════════════════════════════════════════════
+ * CHANGES in this version:
+ *
+ * 1. findByPhoneNumberIdAndStatus() — status-aware idempotency lookup
+ *    Required by the two-transaction registration pattern.
+ *    The service must distinguish between:
+ *      PENDING            → registration started, Meta not yet called
+ *      ACTIVE             → already fully registered (return it, don't retry)
+ *      REGISTRATION_FAILED → Meta call failed, safe to retry
+ *
+ * 2. updatePhoneStatus() — targeted status update for TX 2
+ *    Replaces entity load → field set → save pattern in the finalization step.
+ *    Uses clearAutomatically + flushAutomatically (senior review fix) to prevent
+ *    stale L1 cache reads and dirty-entity overwrites.
+ *
+ * 3. SENIOR REVIEW FIXES retained:
+ *    - findByMetaPhoneIdWithOAuthAccount() uses Meta ID not DB PK
+ *    - All @Modifying have clearAutomatically + flushAutomatically
+ * ═══════════════════════════════════════════════════════════════
  */
 @Repository
 public interface WabaPhoneNumberRepository extends JpaRepository<WabaPhoneNumber, Long> {
 
-    /**
-     * Find all phone numbers for a WABA
-     */
+    // ── READ ────────────────────────────────────────────────────
+
     List<WabaPhoneNumber> findByWabaAccountId(Long wabaAccountId);
 
-    /**
-     * Find active phone numbers for a WABA
-     */
-    List<WabaPhoneNumber> findByWabaAccountIdAndStatus(Long wabaAccountId, PhoneNumberStatus status);
+    List<WabaPhoneNumber> findByWabaAccountIdAndStatus(Long wabaAccountId,
+                                                       PhoneNumberStatus status);
 
-    /**
-     * Find by Meta phone number ID
-     */
     Optional<WabaPhoneNumber> findByPhoneNumberId(String phoneNumberId);
 
     /**
-     * Check if phone number already registered
+     * Status-aware idempotency check for the two-phase registration pattern.
+     *
+     * The registration saga needs to know not just whether a phone row exists,
+     * but what state it is in so it can decide the correct action:
+     *
+     *   status == ACTIVE             → already done, return it
+     *   status == PENDING            → TX 1 committed but TX 2 not yet run
+     *                                  (retry the Meta call + TX 2)
+     *   status == REGISTRATION_FAILED → Meta previously rejected it; safe to retry
+     *   empty                        → phone is new, proceed with TX 1
+     *
+     * This replaces the naive existsByPhoneNumberId() check that could not
+     * distinguish between these cases.
      */
+    Optional<WabaPhoneNumber> findByPhoneNumberIdAndStatus(String phoneNumberId,
+                                                           PhoneNumberStatus status);
+
     boolean existsByPhoneNumberId(String phoneNumberId);
 
-    /**
-     * Find phone numbers with quality issues (YELLOW or RED)
-     */
-    @Query("SELECT p FROM WabaPhoneNumber p WHERE p.qualityRating IN :ratings AND p.status = 'ACTIVE'")
-    List<WabaPhoneNumber> findByQualityRatingIn(@Param("ratings") List<QualityRating> ratings);
-
-    /**
-     * Count phone numbers per WABA
-     */
     long countByWabaAccountId(Long wabaAccountId);
 
     /**
-     * Update quality rating by phone number ID
+     * SENIOR FIX — Meta phoneNumberId replaces DB primary key.
+     *
+     * JOIN FETCH loads WabaPhoneNumber → WabaAccount → MetaOAuthAccount
+     * in one SQL JOIN. Zero additional queries for token resolution.
+     *
+     * Uses Meta's phoneNumberId (String) — not the DB pk (Long).
+     * Callers already hold the Meta ID from the SDK/frontend.
      */
-    @Modifying
-    @Query("UPDATE WabaPhoneNumber p SET p.qualityRating = :rating WHERE p.phoneNumberId = :phoneNumberId")
+    @Query("""
+            SELECT p FROM WabaPhoneNumber p
+            JOIN FETCH p.wabaAccount w
+            JOIN FETCH w.metaOAuthAccount
+            WHERE p.phoneNumberId = :metaPhoneId
+            """)
+    Optional<WabaPhoneNumber> findByMetaPhoneIdWithOAuthAccount(
+            @Param("metaPhoneId") String metaPhoneId);
+
+    /**
+     * Bulk load existing phones for a WABA by their Meta phone IDs.
+     * Replaces N individual findByPhoneNumberId() calls in the sync loop
+     * with a single IN query.
+     */
+    @Query("""
+            SELECT p FROM WabaPhoneNumber p
+            WHERE p.wabaAccountId = :wabaAccountId
+            AND p.phoneNumberId IN :phoneNumberIds
+            """)
+    List<WabaPhoneNumber> findAllByWabaAccountIdAndPhoneNumberIdIn(
+            @Param("wabaAccountId") Long wabaAccountId,
+            @Param("phoneNumberIds") List<String> phoneNumberIds);
+
+    /**
+     * Find phone numbers with quality issues (YELLOW or RED).
+     */
+    @Query("SELECT p FROM WabaPhoneNumber p " +
+            "WHERE p.qualityRating IN :ratings AND p.status = 'ACTIVE'")
+    List<WabaPhoneNumber> findByQualityRatingIn(@Param("ratings") List<QualityRating> ratings);
+
+    // ── WRITE ───────────────────────────────────────────────────
+
+    /**
+     * Targeted status update — used by TX 2 of the registration saga.
+     *
+     * Avoids the load-then-set-then-save pattern (which requires an
+     * extra SELECT and holds the entity in the persistence context).
+     *
+     * clearAutomatically = true → evicts entity from L1 cache after UPDATE
+     *   so subsequent reads in the same tx see the new status, not stale cache.
+     *
+     * flushAutomatically = true → flushes any dirty entity state before the
+     *   UPDATE runs, preventing a later auto-flush from silently overwriting
+     *   the status the UPDATE just set.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE WabaPhoneNumber p " +
+            "SET p.status = :newStatus " +
+            "WHERE p.phoneNumberId = :phoneNumberId " +
+            "AND p.status = :expectedStatus")
+    int updatePhoneStatus(@Param("phoneNumberId") String phoneNumberId,
+                          @Param("expectedStatus") PhoneNumberStatus expectedStatus,
+                          @Param("newStatus") PhoneNumberStatus newStatus);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE WabaPhoneNumber p " +
+            "SET p.qualityRating = :rating " +
+            "WHERE p.phoneNumberId = :phoneNumberId")
     int updateQualityRating(@Param("phoneNumberId") String phoneNumberId,
                             @Param("rating") QualityRating rating);
 
-    /**
-     * Update status by phone number ID
-     */
-    @Modifying
-    @Query("UPDATE WabaPhoneNumber p SET p.status = :status WHERE p.phoneNumberId = :phoneNumberId")
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE WabaPhoneNumber p " +
+            "SET p.status = :status " +
+            "WHERE p.phoneNumberId = :phoneNumberId")
     int updateStatusByPhoneNumberId(@Param("phoneNumberId") String phoneNumberId,
                                     @Param("status") PhoneNumberStatus status);
 
     /**
-     * Find phone numbers by WABA ID (using wabaId string, not FK)
+     * Find phone numbers by WABA string ID (via JOIN).
      */
-    @Query("SELECT p FROM WabaPhoneNumber p " +
-            "JOIN p.wabaAccount w " +
-            "WHERE w.wabaId = :wabaId")
+    @Query("""
+            SELECT p FROM WabaPhoneNumber p
+            JOIN p.wabaAccount w
+            WHERE w.wabaId = :wabaId
+            """)
     List<WabaPhoneNumber> findByWabaId(@Param("wabaId") String wabaId);
 }

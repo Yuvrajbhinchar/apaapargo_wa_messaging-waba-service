@@ -19,7 +19,7 @@ public class RequestVerificationCodeRequest {
 
     @NotNull(message = "Phone number ID is required")
     @Schema(description = "Phone number ID from database", example = "1")
-    private Long phoneNumberId;
+    private String phoneNumberId;
 
     @NotBlank(message = "Verification method is required")
     @Pattern(regexp = "^(SMS|VOICE)$", message = "Method must be SMS or VOICE")

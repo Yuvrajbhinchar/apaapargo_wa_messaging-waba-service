@@ -19,7 +19,7 @@ public class VerifyPhoneNumberRequest {
 
     @NotNull(message = "Phone number ID is required")
     @Schema(description = "Phone number ID from database", example = "1")
-    private Long phoneNumberId;
+    private String phoneNumberId;
 
     @NotBlank(message = "Verification code is required")
     @Pattern(regexp = "^[0-9]{6}$", message = "Code must be 6 digits")
