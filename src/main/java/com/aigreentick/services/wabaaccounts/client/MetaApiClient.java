@@ -121,12 +121,10 @@ public class MetaApiClient {
      */
     public MetaApiResponse subscribeWabaWebhook(String wabaId, String accessToken) {
         log.debug("Subscribing to webhook for WABA: {}", wabaId);
-        // FIX 2: v18.0 required for this endpoint
         String url = config.getRegistrationVersionedBaseUrl() + "/" + wabaId + "/subscribed_apps";
 
         MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
         body.add("access_token", accessToken);
-        // FIX 1: subscribed_fields is REQUIRED — without it Meta ignores the subscription
         body.add("subscribed_fields", "messages");
         return post(url, body, null);
     }
@@ -139,15 +137,10 @@ public class MetaApiClient {
     // PHASE 1.5 — Phone Registration (v18.0)
     // ═══════════════════════════════════════════════════════════
 
-    /**
-     Uses v18.0 — Meta requires this version for register endpoint.
-     * POST /{phoneNumberId}/register
-     */
     public MetaApiResponse registerPhoneNumber(String phoneNumberId,
                                                String accessToken,
                                                String pin) {
         log.info("Registering phone number with Meta: phoneNumberId={}", phoneNumberId);
-        // FIX 2: v18.0 required for this endpoint
         String url = config.getRegistrationVersionedBaseUrl() + "/" + phoneNumberId + "/register";
 
         MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
@@ -245,6 +238,74 @@ public class MetaApiClient {
                 .fromUriString(config.getVersionedBaseUrl() + "/debug_token")
                 .queryParam("input_token",  tokenToInspect)
                 .queryParam("access_token", appAccessToken)
+                .toUriString();
+        return get(url);
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // HEALTH CHECK APIs  ← NEW
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * GET /{phoneNumberId}?fields=id,display_phone_number,quality_rating,verified_name,status,...
+     *
+     * Targeted single-phone health check. Unlike getPhoneNumbers() which fetches
+     * ALL phones for a WABA, this fetches the status of ONE specific phone number.
+     *
+     * Returns flat JSON — fields land in extras via @JsonAnySetter.
+     * Read with: response.getFlatValue("status"), getFlatValue("quality_rating"), etc.
+     */
+    public MetaApiResponse getPhoneNumberStatus(String phoneNumberId, String accessToken) {
+        log.debug("Fetching phone number status: phoneNumberId={}", phoneNumberId);
+        String url = UriComponentsBuilder
+                .fromUriString(config.getVersionedBaseUrl() + "/" + phoneNumberId)
+                .queryParam("fields", "id,display_phone_number,quality_rating,verified_name,status,code_verification_status,name_status")
+                .queryParam("access_token", accessToken)
+                .toUriString();
+        return get(url);
+    }
+
+    /**
+     * GET /{wabaId}?fields=id,name,account_review_status,message_template_namespace,status
+     *
+     * Fetches WABA review status. This is DIFFERENT from getWabaDetails() which
+     * does NOT include account_review_status in its fields list.
+     *
+     * account_review_status values: APPROVED | PENDING | REJECTED
+     * message_template_namespace: present = WABA is operational
+     *
+     * Returns flat JSON — fields land in extras.
+     * Read with: response.getFlatValue("account_review_status")
+     */
+    public MetaApiResponse getWabaReviewStatus(String wabaId, String accessToken) {
+        log.debug("Fetching WABA review status: wabaId={}", wabaId);
+        String url = UriComponentsBuilder
+                .fromUriString(config.getVersionedBaseUrl() + "/" + wabaId)
+                .queryParam("fields", "id,name,account_review_status,message_template_namespace,status")
+                .queryParam("access_token", accessToken)
+                .toUriString();
+        return get(url);
+    }
+
+    /**
+     * GET /{phoneNumberId}/whatsapp_business_profile
+     *
+     * Fetches the WhatsApp Business Profile for a phone number.
+     * If this call fails (non-200 or empty response), it indicates either:
+     *   - The phone number is not properly connected
+     *   - The token has lost whatsapp_business_management scope
+     *
+     * Profile presence = permissions intact + phone operational.
+     *
+     * Returns { "data": [ { "about": "...", "address": "...", ... } ] }
+     * Use response.getDataAsList() to access.
+     */
+    public MetaApiResponse getBusinessProfile(String phoneNumberId, String accessToken) {
+        log.debug("Fetching business profile: phoneNumberId={}", phoneNumberId);
+        String url = UriComponentsBuilder
+                .fromUriString(config.getVersionedBaseUrl() + "/" + phoneNumberId + "/whatsapp_business_profile")
+                .queryParam("fields", "about,address,description,email,profile_picture_url,websites,vertical")
+                .queryParam("access_token", accessToken)
                 .toUriString();
         return get(url);
     }

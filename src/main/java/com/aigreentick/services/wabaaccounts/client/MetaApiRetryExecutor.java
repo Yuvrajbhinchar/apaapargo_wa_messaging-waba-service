@@ -58,12 +58,13 @@ public class MetaApiRetryExecutor {
                     int errorCode = extractErrorCode(response);
 
                     if (isPermanentError(errorCode, response)) {
-                        // Don't retry — this will fail on every attempt
                         log.error("{} failed permanently (attempt {}/{}): code={}, msg={}",
                                 context, attempt, MAX_ATTEMPTS,
                                 errorCode, response.getErrorMessage());
-                        throw new MetaApiException(
-                                context + " failed: " + response.getErrorMessage());
+
+                        // ✅ ClientException is in ignore-exceptions — won't trip circuit breaker
+                        throw new MetaApiException.ClientException(
+                                context + " failed: " + response.getErrorMessage(), 400);
                     }
 
                     if (attempt == MAX_ATTEMPTS) {

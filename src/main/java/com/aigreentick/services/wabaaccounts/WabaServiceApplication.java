@@ -31,11 +31,11 @@ import org.springframework.scheduling.annotation.EnableAsync;
         info = @Info(
                 title = "WABA Service API",
                 version = "1.0.0",
-                description = "WhatsApp Business Account Management Service for AiGreenTick Platform. " +
+                description = "WhatsApp Business Account Management Service for Apargo   Platform. " +
                         "Direct Meta Cloud API integration (Tech Partner).",
                 contact = @Contact(
-                        name = "AiGreenTick Support",
-                        email = "support@aigreentick.com"
+                        name = "Apargo Support",
+                        email = "support@apargo.com"
                 )
         ),
         servers = {

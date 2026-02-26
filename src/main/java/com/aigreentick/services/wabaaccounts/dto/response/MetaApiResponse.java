@@ -187,6 +187,10 @@ public class MetaApiResponse {
         return true; // Read endpoints don't include "success" key
     }
 
+    public void setError(Map<String, Object> error) {
+        this.error = error;
+    }
+
     /**
      * @deprecated Use getDataAsMap() or getDataAsList() or getFlatValue() instead.
      * Kept temporarily to avoid compilation errors during migration — remove after all callers updated.

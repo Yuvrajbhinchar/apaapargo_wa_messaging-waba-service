@@ -54,12 +54,12 @@ spring:
 # Set real values via env vars in production
 # ─────────────────────────────────────────────────────────────
 meta:
-  app-id: ${META_APP_ID:123456}
-  app-secret: ${META_APP_SECRET:123456}
+  app-id: ${META_APP_ID:64}
+  app-secret: ${META_APP_SECRET:7f07488}
   graph-api-version: v23.0
   graph-api-base-url: https://graph.facebook.com
-  webhook-verify-token: ${WEBHOOK_VERIFY_TOKEN:65487900}
-  embedded-signup-config-id: ${META_EMBEDDED_SIGNUP_CONFIG_ID:}
+  webhook-verify-token: ${WEBHOOK_VERIFY_TOKEN:65487908975900}
+  embedded-signup-config-id: ${META_EMBEDDED_SIGNUP_CONFIG_ID:1166327075264525}
   # FIX 2: Separate version for subscribe webhook + register phone
   phone-registration-api-version: v18.0
   # FIX: default PIN for phone registration
