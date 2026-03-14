@@ -60,9 +60,9 @@ meta:
   graph-api-base-url: https://graph.facebook.com
   webhook-verify-token: ${WEBHOOK_VERIFY_TOKEN:65487908975900}
   embedded-signup-config-id: ${META_EMBEDDED_SIGNUP_CONFIG_ID:1166327075264525}
-  # FIX 2: Separate version for subscribe webhook + register phone
+  # Separate version for subscribe webhook + register phone
   phone-registration-api-version: v18.0
-  # FIX: default PIN for phone registration
+  # default PIN for phone registration
   default-registration-pin: "123456"
 
 
