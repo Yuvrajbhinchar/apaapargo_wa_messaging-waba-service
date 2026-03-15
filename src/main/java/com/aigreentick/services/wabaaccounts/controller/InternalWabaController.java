@@ -34,14 +34,17 @@ public class InternalWabaController {
     private final TokenEncryptionService tokenEncryptionService;
 
     /**
-     * GET /internal/waba-accounts/{wabaAccountId}/credentials
+     * GET /internal/waba-accounts/{wabaId}/credentials
      *
      * Returns the Meta credentials needed to send messages on behalf of a WABA.
      * Callers (e.g. campaign-service) call this once per campaign preparation,
      * then cache the result for the duration of the send window.
      *
+     *accepts Meta WABA ID (e.g. "143685356278890") instead of DB ID.
+     * This makes it easier for callers who only know the Meta WABA ID.
+     *
      * Response fields:
-     *   wabaAccountId — internal DB ID (echoed back for correlation)
+     *   wabaAccountId — internal DB ID (for correlation/logging)
      *   phoneNumberId — Meta's opaque phone number ID used as the 'from' value
      *   accessToken   — decrypted, ready-to-use Meta Bearer token
      *
@@ -51,38 +54,39 @@ public class InternalWabaController {
      *     GET /api/v1/phone-numbers/waba/{wabaAccountId} instead
      *
      * Performance target: p99 < 2s
-     *   - Two indexed PK lookups + one indexed FK lookup — sub-millisecond at scale
+     *   - Indexed waba_id lookup + one indexed FK lookup — sub-millisecond at scale
      *   - No Meta API calls; all data served from DB
      *
      * Error cases:
-     *   404 WABA_NOT_FOUND         → wabaAccountId does not exist
+     *   404 WABA_NOT_FOUND         → wabaId does not exist
      *   404 PHONE_NUMBER_NOT_FOUND → WABA has no active phone numbers
      *   404 WABA_NOT_FOUND         → OAuth account missing (re-run embedded signup)
      *   500                        → token decryption failure (key mismatch / corruption)
      */
-    @GetMapping("/{wabaAccountId}/credentials")
+    @GetMapping("/{wabaId}/credentials")
     @Transactional(readOnly = true)
     @Operation(
-            summary  = "Get Meta credentials for a WABA — INTERNAL ONLY",
+            summary  = "Get Meta credentials for a WABA by Meta WABA ID — INTERNAL ONLY",
             description =
                     "Returns the decrypted Meta access token and phone number ID for the given " +
-                            "WABA account. Called by campaign-service before message dispatch. " +
+                            "Meta WABA ID (e.g. 143685356278890). Called by campaign-service before " +
+                            "message dispatch. " +
                             "⚠️ Internal VPC only — never expose publicly."
     )
     public ResponseEntity<WabaCredentialsResponse> getCredentials(
-            @PathVariable Long wabaAccountId) {
+            @PathVariable String wabaId) {
 
-        log.debug("Credentials requested: wabaAccountId={}", wabaAccountId);
+        log.debug("Credentials requested: wabaId={}", wabaId);
 
-        // ── 1. Load WABA ────────────────────────────────────────────────────
-        WabaAccount waba = wabaAccountRepository.findById(wabaAccountId)
-                .orElseThrow(() -> WabaNotFoundException.withId(wabaAccountId));
+        // ── 1. Load WABA by Meta WABA ID ────────────────────────────────────
+        WabaAccount waba = wabaAccountRepository.findByWabaId(wabaId)
+                .orElseThrow(() -> WabaNotFoundException.withWabaId(wabaId));
 
         // ── 2. Load OAuth account (token) ───────────────────────────────────
         MetaOAuthAccount oauthAccount = metaOAuthAccountRepository
                 .findById(waba.getMetaOAuthAccountId())
                 .orElseThrow(() -> new WabaNotFoundException(
-                        "OAuth account not found for WABA " + wabaAccountId +
+                        "OAuth account not found for WABA " + wabaId +
                                 ". Re-run embedded signup to reconnect."));
 
         // ── 3. Resolve active phone number ──────────────────────────────────
@@ -92,12 +96,12 @@ public class InternalWabaController {
         //    rather than relying on this endpoint.
         List<WabaPhoneNumber> activePhones = phoneNumberRepository
                 .findByWabaAccountIdAndStatus(
-                        wabaAccountId,
+                        waba.getId(),
                         com.aigreentick.services.wabaaccounts.constants.PhoneNumberStatus.ACTIVE);
 
         if (activePhones.isEmpty()) {
             throw new PhoneNumberNotFoundException(
-                    "No active phone numbers found for WABA " + wabaAccountId +
+                    "No active phone numbers found for WABA " + wabaId +
                             ". Register and activate a phone number first.");
         }
 
@@ -108,11 +112,11 @@ public class InternalWabaController {
         //    Decryption failure → 500 (infra, not business failure)
         String accessToken = tokenEncryptionService.decrypt(oauthAccount.getAccessToken());
 
-        log.debug("Credentials resolved: wabaAccountId={}, phoneNumberId={}",
-                wabaAccountId, metaPhoneNumberId);
+        log.debug("Credentials resolved: wabaId={}, dbId={}, phoneNumberId={}",
+                wabaId, waba.getId(), metaPhoneNumberId);
 
         return ResponseEntity.ok(WabaCredentialsResponse.builder()
-                .wabaAccountId(wabaAccountId)
+                .wabaAccountId(waba.getId())
                 .phoneNumberId(metaPhoneNumberId)
                 .accessToken(accessToken)
                 .build());
